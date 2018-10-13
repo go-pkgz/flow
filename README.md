@@ -116,7 +116,6 @@ func ExampleFlow_flow() {
 						return ctx.Err()
 					}
 				}
-				return nil
 			}
 			return out, runFn
 		},

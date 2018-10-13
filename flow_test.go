@@ -205,7 +205,7 @@ func multiplierHandler(mult int, cancelOn int) Handler {
 		metrics := ctx.Value(MetricsContextKey).(*Metrics)
 
 		resFn := func() error {
-			log.Print("start multiplyer x", mult)
+			log.Print("start multilayer x", mult)
 			defer func() {
 				log.Print("completed x", mult)
 				close(resCh)
@@ -322,7 +322,6 @@ func ExampleFlow_flow() {
 						return ctx.Err()
 					}
 				}
-				return nil
 			}
 			return out, runFn
 		},
