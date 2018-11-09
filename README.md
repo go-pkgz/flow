@@ -57,6 +57,8 @@ func ReaderHandler(reader io.Reader) Handler {
 
 ## Usage
 
+_also see [example](https://github.com/go-pkgz/flow/tree/master/example)_
+
 ```go
 // flow illustrates the use of a Flow for concurrent pipeline running each handler in separate goroutine.
 func ExampleFlow_flow() {

@@ -1,0 +1,5 @@
+The connected processes communicate by means of fixed- capacity connections. A connection is attached to a process by means of a port, which has a name agreed upon between the process code and the network definition.
+
+More than one process can execute the same piece of code. Ports may either be simple, or array-type. If a connection becomes full, processes feeding it will be suspended; if it becomes empty, the process (there can only be one) will be suspended.
+It is the combination of ports with asynchronous processes that allows many long-running primitive functions of data processing, such as Sort, Merge, Summarize, etc., to be obtained “off the shelf”, and combined with application-specific components.
+All of these can be thought of as software black boxes. Fig. 1

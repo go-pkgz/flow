@@ -1,0 +1,70 @@
+This type of program involves passing a file of "details" (changes, adds and deletes) against a "master file", and producing (at least) an updated master file, and one or more reports. Update programs are generally quite hard to code using synchronous, procedural code, as two (sometimes more) input streams have to be kept synchronized, even though there may be masters without corresponding details, or vice versa.
+
+
+Canonical "batch update" structure
+In FBP, a reusable component (Collate), based on the unit record idea of a Collator, makes writing this type of application much easier as Collate merges the two streams and inserts bracket IPs to indicate grouping levels, significantly simplifying the downstream logic. Suppose that one stream ("masters" in this case) consists of IPs with key values of 1, 2 and 3, and the second stream IPs ("details") have key values of 11, 12, 21, 31, 32, 33 and 41, where the first digit corresponds to the master key values. Using bracket characters to represent "bracket" IPs, the collated output stream will be as follows:
+
+( m1 d11 d12 ) ( m2 d21 ) ( m3 d31 d32 d33 ) (d41)
+As there was no master with a value of 4, the last group consists of a single detail (plus brackets).
+
+The structure of the above stream can be described succinctly using a BNF-like notation such as
+
+{ ( [m] d* ) }*
+Collate is a reusable black box which only needs to know where the control fields are in its incoming IPs (even this is not strictly necessary as transformer processes can be inserted upstream to place the control fields in standard locations), and can in fact be generalized to any number of input streams, and any depth of bracket nesting. Collate uses an array-type port for input, allowing a variable number of input streams.
+
+Multiplexing processes[edit]
+Flow-based programming supports process multiplexing in a very natural way. Since components are read-only, any number of instances of a given component ("processes") can run asynchronously with each other.
+
+
+Example of multiplexing
+When computers usually had a single processor, this was useful when a lot of I/O was going on; now that machines usually have multiple processors, this is starting to become useful when processes are CPU-intensive as well. The diagram in this section shows a single "Load Balancer" process distributing data between 3 processes, labeled S1, S2 and S3, respectively, which are instances of a single component, which in turn feed into a single process on a "first-come, first served" basis.
+
+Simple interactive network[edit]
+
+Schematic of general interactive application
+In this general schematic, requests (transactions) coming from users enter the diagram at the upper left, and responses are returned at the lower left. The "back ends" (on the right side) communicate with systems at other sites, e.g. using CORBA, MQSeries, etc. The cross-connections represent requests that do not need to go to the back ends, or requests that have to cycle through the network more than once before being returned to the user.
+
+As different requests may use different back-ends, and may require differing amounts of time for the back-ends (if used) to process them, provision must be made to relate returned data to the appropriate requesting transactions, e.g. hash tables or caches.
+
+The above diagram is schematic in the sense that the final application may contain many more processes: processes may be inserted between other processes to manage caches, display connection traffic, monitor throughput, etc. Also the blocks in the diagram may represent "subnets" - small networks with one or more open connections.
+
+Comparison with other paradigms and methodologies[edit]
+Jackson Structured Programming (JSP) and Jackson System Development (JSD)[edit]
+Main articles: Jackson Structured Programming and Jackson System Development
+This methodology assumes that a program must be structured as a single procedural hierarchy of subroutines. Its starting point is to describe the application as a set of "main lines", based on the input and output data structures. One of these "main lines" is then chosen to drive the whole program, and the others are required to be "inverted" to turn them into subroutines (hence the name "Jackson inversion"). This sometimes results in what is called a "clash", requiring the program to be split into multiple programs or coroutines. When using FBP, this inversion process is not required, as every FBP component can be considered a separate "main line".
+
+FBP and JSP share the concept of treating a program (or some components) as a parser of an input stream.
+
+In Jackson's later work, Jackson System Development (JSD), the ideas were developed further.[14][15]
+
+In JSD the design is maintained as a network design until the final implementation stage. The model is then transformed into a set of sequential processes to the number of available processors. Jackson discusses the possibility of directly executing the network model that exists prior to this step, in section 1.3 of his book (italics added):
+
+The specification produced at the end of the System Timing step is, in principle, capable of direct execution. The necessary environment would contain a processor for each process, a device equivalent to an unbounded buffer for each data stream, and some input and output devices where the system is connected to the real world. Such an environment could, of course, be provided by suitable software running on a sufficiently powerful machine. Sometimes, such direct execution of the specification will be possible, and may even be a reasonable choice.[15]
+FBP was recognized by M A Jackson as an approach that follows his method of "Program decomposition into sequential processes communicating by a coroutine-like mechanism"[16]
+
+Applicative programming[edit]
+Main article: Applicative programming language
+W.B. Ackerman defines an applicative language as one which does all of its processing by means of operators applied to values.[17] The earliest known applicative language was LISP.
+
+An FBP component can be regarded as a function transforming its input stream(s) into its output stream(s). These functions are then combined to make more complex transformations, as shown here:
+
+
+Two functions feeding one
+If we label streams, as shown, with lower case letters, then the above diagram can be represented succinctly as follows:
+
+c = G(F(a),F(b));
+Just as in functional notation F can be used twice because it only works with values, and therefore has no side effects, in FBP two instances of a given component may be running concurrently with each other, and therefore FBP components must not have side-effects either. Functional notation could clearly be used to represent at least a part of an FBP network.
+
+The question then arises whether FBP components can themselves be expressed using functional notation. W.H. Burge showed how stream expressions can be developed using a recursive, applicative style of programming, but this work was in terms of (streams of) atomic values.[18] In FBP, it is necessary to be able to describe and process structured data chunks (FBP IPs).
+
+Furthermore, most applicative systems assume that all the data is available in memory at the same time, whereas FBP applications need to be able to process long-running streams of data while still using finite resources. Friedman and Wise suggested a way to do this by adding the concept of "lazy cons" to Burge's work. This removed the requirement that both of the arguments of "cons" be available at the same instant of time. "Lazy cons" does not actually build a stream until both of its arguments are realized - before that it simply records a "promise" to do this. This allows a stream to be dynamically realized from the front, but with an unrealized back end. The end of the stream stays unrealized until the very end of the process, while the beginning is an ever-lengthening sequence of items.
+
+Linda[edit]
+Main article: Linda
+Many of the concepts in FBP seem to have been discovered independently in different systems over the years. Linda, mentioned above, is one such. The difference between the two techniques is illustrated by the Linda "school of piranhas" load balancing technique - in FBP, this requires an extra "load balancer" component which routes requests to the component in a list which has the smallest number of IPs waiting to be processed. Clearly FBP and Linda are closely related, and one could easily be used to simulate the other.
+
+Object-oriented programming[edit]
+Main article: Object-oriented programming
+An object in OOP can be described as a semi-autonomous unit comprising both information and behaviour. Objects communicate by means of "method calls", which are essentially subroutine calls, done indirectly via the class to which the receiving object belongs. The object's internal data can only be accessed by means of method calls, so this is a form of information hiding or "encapsulation". Encapsulation, however, predates OOP - David Parnas wrote one of the seminal articles on it in the early 70s[19] - and is a basic concept in computing. Encapsulation is the very essence of an FBP component, which may be thought of as a black box, performing some conversion of its input data into its output data. In FBP, part of the specification of a component is the data formats and stream structures that it can accept, and those it will generate. This constitutes a form of design by contract. In addition, the data in an IP can only be accessed directly by the currently owning process. Encapsulation can also be implemented at the network level, by having outer processes protect inner ones.
+
+A paper by C. Ellis and S. Gibbs distinguishes between active objects and passive objects.[20] Passive objects comprise information and behaviour, as stated above, but they cannot determine the timing of this behaviour. Active objects on the other hand can do this. In their article Ellis and Gibbs state that active objects have much more potential for the development of maintainable systems than do passive objects. An FBP application can be viewed as a combination of these two types of object, where FBP processes would correspond to active objects, while IPs would correspond to passive objects.
