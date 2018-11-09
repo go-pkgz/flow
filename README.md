@@ -10,13 +10,13 @@ Package `flow` doesnt't introduce any high-level abstraction and keeps everythin
 
 - Each handler represents an async stage. It consumes data from an input channel and publishes results to an output channel. 
 - Each handler runs in a separate goroutine. 
-- User must implement Handler function and add it to the Flow. 
+- User must implement Handler functions and add it to the Flow. 
 - Each handler usually creates an output channel, reads from
-the input channel, processes data and sends results to the output channel. 
-- Processing sequence defined by order of those handlers.
+the input channel, processes data, sends results to the output channel and closes the output channel.
+- Processing sequence determined by the order of those handlers.
 - Any `Handler` can run in multiple concurrent goroutines (workers) by using the `Parallel` decorator. 
-- `FanOu`t allows to pass multiple handlers in broadcast mode, i.e., each handler gets every input record. Outputs
-from these handlers merged and combined into single output channel.
+- `FanOut` allows to pass multiple handlers in broadcast mode, i.e., each handler gets every input record. Outputs
+from these handlers merged into single output channel.
 - Processing error detected as return error value from user's handler func. Such error interrupts all other
 running handlers gracefully and won't keep any goroutine running/leaking. 
 - Each `Flow` object can be executed only once.
