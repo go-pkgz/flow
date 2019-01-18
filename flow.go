@@ -74,7 +74,7 @@ func (f *Flow) Add(handlers ...Handler) *Flow {
 	for _, handler := range handlers {
 		ch, fn := handler(f.ctx, f.lastCh)
 		if ch == nil {
-			log.Fatalf("[ERROR] can't register flow handler with nil channel!")
+			log.Fatalf("can't register flow handler with nil channel!")
 		}
 		f.lastCh = ch
 		f.funcs = append(f.funcs, fn) // register runnable with flow executor
