@@ -181,10 +181,10 @@ func (f *Flow) Metrics() *Metrics {
 }
 
 // merge gets multiple channels and fan-in to a single output channel
-func (f *Flow) merge(ctx context.Context, chs []chan interface{}) (chan interface{}, func() error) {
+func (f *Flow) merge(ctx context.Context, chs []chan interface{}) (mergeCh chan interface{}, mergeFn func() error) {
 
-	mergeCh := make(chan interface{})
-	mergeFn := func() error {
+	mergeCh = make(chan interface{})
+	mergeFn = func() error {
 		defer close(mergeCh)
 
 		gr, ctxGroup := errgroup.WithContext(ctx)

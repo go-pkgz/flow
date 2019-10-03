@@ -87,9 +87,9 @@ func (m *Metrics) String() string {
 		return res
 	}()
 
-	var udata []string
-	for _, k := range sortedKeys {
-		udata = append(udata, fmt.Sprintf("%s:%d", k, m.userData[k]))
+	var udata = make([]string, len(sortedKeys))
+	for i, k := range sortedKeys {
+		udata[i] = fmt.Sprintf("%s:%d", k, m.userData[k])
 	}
 	um := ""
 	if len(udata) > 0 {
