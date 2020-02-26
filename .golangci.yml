@@ -46,7 +46,6 @@ linters:
     - varcheck
     - stylecheck
     - gochecknoinits
-    - gocritic
     - golint
     - nakedret
     - gosimple

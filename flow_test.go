@@ -29,7 +29,7 @@ func TestFlowWithAdd(t *testing.T) {
 	e := f.Wait()
 	assert.Nil(t, e)
 
-	expected := ((100 - 1 + 1) * (1 + 100) / 2) * 5 * 3 * 2 //151500
+	expected := ((100 - 1 + 1) * (1 + 100) / 2) * 5 * 3 * 2 // 151500
 	sum := <-f.Channel()
 	assert.Equal(t, expected, sum.(int))
 
@@ -232,7 +232,7 @@ func multiplierHandler(mult int, cancelOn int) Handler {
 	return fn
 }
 
-func collectorHandler(ctx context.Context, ch chan interface{}) (chan interface{}, func() error) {
+func collectorHandler(ctx context.Context, ch chan interface{}) (chOut chan interface{}, fnRun func() error) {
 	resCh := make(chan interface{}, 1)
 
 	calls := 0
@@ -292,8 +292,8 @@ func ExampleFlow_flow() {
 					}
 					f.Metrics().Inc("passed") // increment user-define metric "passed"
 
-					// send result to the next stage with flow.Send helper. Also checks for cancellation
-					if err := Send(ctx, out, val*rand.Int()); err != nil {
+					// send result to the next stage with flow.Send helper. Also, checks for cancellation
+					if err := Send(ctx, out, val*rand.Int()); err != nil { //nolint
 						return err
 					}
 				}
@@ -312,7 +312,7 @@ func ExampleFlow_flow() {
 					select {
 					case e, more := <-in:
 						if !more {
-							out <- sum //send result
+							out <- sum // send result
 							return nil
 						}
 						val := e.(int)
@@ -361,7 +361,8 @@ func ExampleFlow_parallel() {
 				for e := range in {
 					val := e.(int)
 					select {
-					case out <- val * rand.Int(): // send result to the next stage
+					// send result to the next stage
+					case out <- val * rand.Int(): //nolint
 					case <-ctx.Done(): // check for cancellation
 						return ctx.Err()
 					}
@@ -475,7 +476,7 @@ func ExampleFlow_fanOut() {
 					select {
 					case val, ok := <-in:
 						if !ok {
-							out <- sum //send result
+							out <- sum // send result
 							return nil
 						}
 						sum += val.(int)

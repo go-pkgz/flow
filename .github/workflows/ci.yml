@@ -17,19 +17,13 @@ jobs:
           go-version: 1.13
         id: go
 
-      - name: launch mongodb
-        uses: wbari/start-mongoDB@v0.2
-        with:
-          mongoDBVersion: "4.0"
-
       - name: checkout
-        uses: actions/checkout@v1
+        uses: actions/checkout@v2
 
       - name: build and test
         run: |
           export GO111MODULE=on
           export TZ="America/Chicago"
-          export MONGO_TEST=mongodb://127.0.0.1:27017
           go get -v
           go test -timeout=60s -v -covermode=count -coverprofile=$GITHUB_WORKSPACE/profile.cov_tmp
           cat $GITHUB_WORKSPACE/profile.cov_tmp | grep -v "_mock.go" > $GITHUB_WORKSPACE/profile.cov

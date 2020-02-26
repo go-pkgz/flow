@@ -23,7 +23,7 @@ import (
 	"log"
 	"sync"
 
-	"github.com/go-pkgz/flow/errgroup"
+	"golang.org/x/sync/errgroup"
 )
 
 // Flow object with list of all runnable functions and common context
