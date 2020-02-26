@@ -1,4 +1,4 @@
-# Flow - FBP / pipelines [![Build Status](https://travis-ci.org/go-pkgz/flow.svg?branch=master)](https://travis-ci.org/go-pkgz/flow) [![Go Report Card](https://goreportcard.com/badge/github.com/go-pkgz/flow)](https://goreportcard.com/report/github.com/go-pkgz/flow) [![Coverage Status](https://coveralls.io/repos/github/go-pkgz/flow/badge.svg?branch=master)](https://coveralls.io/github/go-pkgz/flow?branch=master)
+# Flow - FBP / pipelines [![Build Status](https://github.com/go-pkgz/flow/workflows/build/badge.svg)](https://github.com/go-pkgz/flow/actions) [![Go Report Card](https://goreportcard.com/badge/github.com/go-pkgz/flow)](https://goreportcard.com/report/github.com/go-pkgz/flow) [![Coverage Status](https://coveralls.io/repos/github/go-pkgz/flow/badge.svg?branch=master)](https://coveralls.io/github/go-pkgz/flow?branch=master)
 
 Package `flow` provides support for very basic FBP / pipelines. It helps to structure multistage processing as 
 a set of independent handlers communicating via channels. The typical use case is for ETL (extract, transform, load)
