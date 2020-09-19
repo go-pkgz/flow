@@ -18,7 +18,7 @@ func TestLocalStore(t *testing.T) {
 	assert.Equal(t, 0.0, store.GetFloat("key1"))
 	assert.Equal(t, "", store.GetString("key1"))
 
-	v, ok = store.Get("key2")
+	_, ok = store.Get("key2")
 	assert.False(t, ok)
 	assert.Equal(t, 0, store.GetInt("key2"))
 
