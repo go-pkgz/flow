@@ -3,12 +3,12 @@ package main
 import (
 	"bufio"
 	"context"
+	"fmt"
 	"log"
 	"os"
 	"strings"
 
 	"github.com/go-pkgz/flow"
-	"github.com/pkg/errors"
 )
 
 // this toy example demonstrates a typical use of flow library.
@@ -52,7 +52,7 @@ func lineSplitHandler(ctx context.Context, ch chan interface{}) (chan interface{
 			fname := val.(string)
 			fh, err := os.Open(fname)
 			if err != nil {
-				return errors.Wrapf(err, "failed to open %s", fname)
+				return fmt.Errorf("failed to open %s: %w", fname, err)
 			}
 
 			lines := 0
@@ -72,7 +72,7 @@ func lineSplitHandler(ctx context.Context, ch chan interface{}) (chan interface{
 
 			log.Printf("file reader completed for %s, read %d lines (total %d)", fname, lines, metrics.Get("lines"))
 			if scanner.Err() != nil {
-				return errors.Wrapf(scanner.Err(), "scanner failed for %s", fname)
+				return fmt.Errorf("scanner failed for %s: %w", fname, scanner.Err())
 			}
 		}
 		log.Printf("line split handler completed, id=%d lines=%d", flow.CID(ctx), metrics.Get("lines"))
@@ -107,7 +107,7 @@ func wordsHandler(minSize int) flow.Handler {
 					count++
 					wi := wordsInfo{size: len(w), special: strings.Contains(w, "data")}
 					if err := flow.Send(ctx, wordsCh, wi); err != nil {
-						return errors.Wrapf(err, "failed words handler %d", flow.CID(ctx))
+						return fmt.Errorf("failed words handler %d: %w", flow.CID(ctx), err)
 					}
 				}
 			}
