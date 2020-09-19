@@ -109,7 +109,9 @@ func New(poolSize int, workerFn workerFn, options ...Option) *Workers {
 
 // Submit record to pool, can be blocked
 func (p *Workers) Submit(v interface{}) {
-	id := rand.Intn(p.poolSize) // randomize distribution by default
+
+	// randomize distribution by default
+	id := rand.Intn(p.poolSize) //nolint gosec
 	if p.chunkFn != nil {
 		// chunked distribution
 		id = int(crc32.Checksum([]byte(p.chunkFn(v)), crc32.MakeTable(crc32.IEEE))) % p.poolSize

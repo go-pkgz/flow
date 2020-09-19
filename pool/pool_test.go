@@ -139,7 +139,7 @@ func TestPoolWithStore(t *testing.T) {
 	go func() {
 		for i := 0; i < 1000; i++ {
 			p.Submit("line")
-			time.Sleep(time.Millisecond * time.Duration(rand.Intn(5)))
+			time.Sleep(time.Millisecond * time.Duration(rand.Intn(5))) //nolint gosec
 		}
 		p.Close()
 	}()
@@ -190,7 +190,7 @@ func TestPoolCanceled(t *testing.T) {
 
 func TestPoolError(t *testing.T) {
 	worker := func(_ context.Context, v interface{}, resCh chan Response, store WorkerStore) error {
-		if rand.Intn(10) > 5 {
+		if rand.Intn(10) > 5 { //nolint gosec
 			return errors.New("some error")
 		}
 		resCh <- Response{Value: v}
@@ -223,7 +223,7 @@ func TestPoolErrorContinue(t *testing.T) {
 	worker := func(_ context.Context, v interface{}, resCh chan Response, store WorkerStore) error {
 		atomic.AddInt64(&c, 1)
 		var e error
-		if rand.Intn(10) > 5 {
+		if rand.Intn(10) > 5 { //nolint gosec
 			e = errors.New("some error")
 		}
 		resCh <- Response{Value: v, Error: e}
