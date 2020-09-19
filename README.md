@@ -1,12 +1,15 @@
-# Flow - FBP / pipelines [![Build Status](https://github.com/go-pkgz/flow/workflows/build/badge.svg)](https://github.com/go-pkgz/flow/actions) [![Go Report Card](https://goreportcard.com/badge/github.com/go-pkgz/flow)](https://goreportcard.com/report/github.com/go-pkgz/flow) [![Coverage Status](https://coveralls.io/repos/github/go-pkgz/flow/badge.svg?branch=master)](https://coveralls.io/github/go-pkgz/flow?branch=master)
+# Flow - FBP / pipelines / workers pool
+ 
+[![Build Status](https://github.com/go-pkgz/flow/workflows/build/badge.svg)](https://github.com/go-pkgz/flow/actions) [![Go Report Card](https://goreportcard.com/badge/github.com/go-pkgz/flow)](https://goreportcard.com/report/github.com/go-pkgz/flow) [![Coverage Status](https://coveralls.io/repos/github/go-pkgz/flow/badge.svg?branch=master)](https://coveralls.io/github/go-pkgz/flow?branch=master)
 
 Package `flow` provides support for very basic FBP / pipelines. It helps to structure multistage processing as 
 a set of independent handlers communicating via channels. The typical use case is for ETL (extract, transform, load)
-type of processing.
+type of processing. Package `flow` doesn't introduce any high-level abstraction and keeps everything in the hand of the user. 
 
-Package `flow` doesnt't introduce any high-level abstraction and keeps everything in the hand of the user. 
 
-## Details
+Package `pool` provides a simplified version of `flow` suitable for cases with a single-handler flows. 
+
+## Details about `flow` package
 
 - Each handler represents an async stage. It consumes data from an input channel and publishes results to an output channel. 
 - Each handler runs in a separate goroutine. 
@@ -26,7 +29,7 @@ running handlers gracefully and won't keep any goroutine running/leaking.
 
 `go get -u github.com/go-pkgz/flow`
 
-## Example of the handler
+## Example of the flow's handler
 
 ```go
 // ReaderHandler creates flow.Handler, reading strings from any io.Reader
@@ -55,7 +58,7 @@ func ReaderHandler(reader io.Reader) Handler {
 }
 ```
 
-## Usage
+## Usage of the flow package
 
 _for complete example see [example](https://github.com/go-pkgz/flow/tree/master/_example)_
 
@@ -195,4 +198,92 @@ func ExampleFlow_parallel() {
 		fmt.Printf("all done, result=%v", <-f.Channel())
 	}
 }
+```
+
+## Details about `pool` package
+
+- In addition to the default "run a func in multiple goroutines" mode, it also provides an optional support of chunked workers. It means - each key, detected by user-provide func guaranteed to be processed by the same worker. Such mode needed for stateful flows where each set of input records has to be processed sequentially and some state should be kept.
+- another thing `pool` provides is a batch size. This one is a simple performance optimization keeping input request into a buffer and send them to worker channel in batches (slices) instead of per-submit call
+
+Options:
+
+- `ChunkFn` - the function returns string identifying the chunk
+- `Batch` - sets batch size (default 1)
+- `ChanResSize` sets the size of output buffered channel (default 1)
+- `ChanWorkerSize` sets the size of workers buffered channel (default 1)
+- `ContinueOnError` allows workers continuation after error occurred
+- `OnCompletion` sets callback for each worker called on successful completion
+
+### worker function
+
+Worker function passed by user and will run in multiple workers (goroutines). 
+This is the function: `type workerFn func(ctx context.Context, inp interface{}, resCh interface{}, store WorkerStore} error`
+
+It takes `inp` parameter, does the job and optionally send result(s) to `resCh`. Error will terminate all workers.
+Note: `workerFn` can be stateful, collect anything it needs and sends 0 or more results. Results wrapped in `Response` struct
+allowing to communicate error code back to consumer.  `workerFn` doesn't need to send errors, enough just return non-nil error.
+ 
+### worker store
+
+Each worker gets `WorkerStore` and can be used as thread-safe per-worker storage for any intermediate results.
+
+```go
+type WorkerStore interface {
+	Set(key string, val interface{})
+	Get(key string) (interface{}, bool)
+	GetInt(key string) int
+	GetFloat(key string) float64
+	GetString(key string) string
+	GetBool(key string) bool
+	Keys() []string
+	Delete(key string)
+}
+```
+
+_alternatively state can be kept outside of workers as a slice of values and accessed by worker ID._
+
+### usage
+
+```go
+    p := pool.New(8, func(ctx context.Context, v interface{}, resCh interface{}, ws pool.WorkerStore} error {
+        // worker function gets input v processes it and response(s) channel to send results
+
+        input, ok := v.(string) // in this case it gets string as input
+        if !ok {
+            return errors.New("incorrect input type")
+        }   
+        // do something with input
+        // ...
+       
+        v := ws.GetInt("something")  // access thread-local var
+                
+	    resCh <- pool.Response{Data: "foo"}
+	    resCh <- pool.Response{Data: "bar"}
+        pool.Metrics(ctx).Inc("counter")
+        ws.Set("something", 1234) // keep thread-local things
+       return "something", true, nil
+    })
+    
+    ch := p.Go(context.TODO()) // start all workers in 8 goroutines
+    
+    // submit values (consumer side)
+    go func() {
+        p.Submit("something")
+        p.Submit("something else")
+        p.Close() // indicates completion of all inputs
+    }()   
+
+    for rec := range ch {
+        if rec.Errors != nil { // error happened
+            return err
+        } 
+        log.Print(rec.Data)  // print value      
+    }
+
+    // alternatively ReadAll helper can be used to get everything from response channel
+    res, err := pool.ReadAll(ch)
+
+    // metrics the same as for flow
+    metrics := pool.Metrics()
+    log.Print(metrics.Get("counter"))
 ```
