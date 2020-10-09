@@ -236,7 +236,7 @@ func TestPoolErrorContinue(t *testing.T) {
 		}
 		require.NoError(t, sender(v))
 		Metrics(ctx).Inc("sent")
-		time.Sleep(time.Duration(rand.Intn(10)) * time.Millisecond)
+		time.Sleep(time.Duration(rand.Intn(10)) * time.Millisecond) //nolint
 
 		return nil
 	}
@@ -248,7 +248,7 @@ func TestPoolErrorContinue(t *testing.T) {
 	go func() {
 		for i := 0; i < 1000; i++ {
 			p.Submit("line")
-			time.Sleep(time.Duration(rand.Intn(1000)) * time.Nanosecond)
+			time.Sleep(time.Duration(rand.Intn(1000)) * time.Nanosecond) //nolint
 		}
 		p.Close()
 	}()
