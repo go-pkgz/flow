@@ -29,7 +29,7 @@ type Workers struct {
 	chunkFn         func(interface{}) string
 	resChanSize     int        // size of responses channel
 	workerChanSize  int        // size of worker channels
-	workerFn        workerFn   // worker function
+	workerFn        WorkerFn   // worker function
 	completeFn      CompleteFn // completion callback function
 	continueOnError bool       // don't terminate on first error
 
@@ -41,10 +41,10 @@ type Workers struct {
 	eg        *errgroup.Group
 }
 
-// Response wraps data and error
-type Response struct {
-	Value interface{} // the actual data
-	Error error       // optional error
+// response wraps data and error
+type response struct {
+	value interface{} // the actual data
+	err   error       // optional error
 }
 
 // WorkerStore defines interface for per-worker storage
@@ -63,14 +63,17 @@ type contextKey string
 
 const widContextKey contextKey = "worker-id"
 
-// workerFn processes input record inpRec and optionally sends response to respCh
-type workerFn func(ctx context.Context, inpRec interface{}, respCh chan Response, store WorkerStore) error
+// WorkerFn processes input record inpRec and optionally sends results to sender func
+type WorkerFn func(ctx context.Context, inpRec interface{}, sender SenderFn, store WorkerStore) error
+
+// SenderFn func called by worker code to publish results
+type SenderFn func(val interface{}) error
 
 // CompleteFn processes input record inpRec and optionally sends response to respCh
-type CompleteFn func(ctx context.Context, respCh chan Response, store WorkerStore) error
+type CompleteFn func(ctx context.Context, store WorkerStore) error
 
 // New creates worker pool, can be activated once
-func New(poolSize int, workerFn workerFn, options ...Option) *Workers {
+func New(poolSize int, workerFn WorkerFn, options ...Option) *Workers {
 
 	if poolSize < 1 {
 		poolSize = 1
@@ -134,40 +137,48 @@ func (p *Workers) Submit(v interface{}) {
 }
 
 // Go activates worker pool, closes result chan on completion
-func (p *Workers) Go(ctx context.Context) <-chan Response {
-	respCh := make(chan Response, p.resChanSize)
+func (p *Workers) Go(ctx context.Context) (Cursor, error) {
 	if p.ctx != nil {
-		respCh <- Response{Error: errors.New("workers poll already activated")}
-		return respCh
+		return Cursor{}, errors.New("workers poll already activated")
 	}
+
+	respCh := make(chan response, p.resChanSize)
 	p.ctx = context.WithValue(ctx, flow.MetricsContextKey, flow.NewMetrics())
 	var egCtx context.Context
 	p.eg, egCtx = errgroup.WithContext(ctx)
-
 	worker := func(id int, inCh chan []interface{}) func() error {
 		return func() error {
 			wCtx := context.WithValue(p.ctx, widContextKey, id)
 			for {
 				select {
 				case vv, ok := <-inCh:
-					if !ok {
-						return p.flush(wCtx, id, respCh)
+					if !ok { // input channel closed
+						e := p.flush(wCtx, id, respCh)
+						if !p.continueOnError {
+							return e
+						}
+						return nil
 					}
+
+					// read from the input slice
 					for _, v := range vv {
-						if err := p.workerFn(wCtx, v, respCh, p.store[id]); err != nil {
+						if err := p.workerFn(wCtx, v, p.sendResponseFn(wCtx, respCh), p.store[id]); err != nil {
 							e := fmt.Errorf("worker %d failed: %w", id, err)
 							if !p.continueOnError {
 								return e
 							}
-							respCh <- Response{Error: e}
+							respCh <- response{err: e}
 						}
 					}
+
 				case <-ctx.Done(): // parent context, passed by caller
-					respCh <- Response{Error: ctx.Err()}
+					respCh <- response{err: ctx.Err()}
 					return ctx.Err()
 				case <-egCtx.Done(): // worker context, set by errgroup
-					respCh <- Response{Error: ctx.Err()}
-					return ctx.Err()
+					if !p.continueOnError {
+						return egCtx.Err()
+					}
+					return nil
 				}
 			}
 		}
@@ -181,12 +192,12 @@ func (p *Workers) Go(ctx context.Context) <-chan Response {
 	go func() {
 		// wait for completion and close the channel
 		if err := p.eg.Wait(); err != nil {
-			respCh <- Response{Error: err}
+			respCh <- response{err: err}
 		}
 		close(respCh)
 	}()
 
-	return respCh
+	return Cursor{ch: respCh}, nil
 }
 
 // Metrics returns all user-defined counters from context.
@@ -195,21 +206,21 @@ func (p *Workers) Metrics() *flow.Metrics {
 }
 
 // flush all records left in buffer to workers, called once for each worker
-func (p *Workers) flush(ctx context.Context, id int, ch chan Response) (err error) {
+func (p *Workers) flush(ctx context.Context, id int, ch chan response) (err error) {
 	for _, v := range p.buf[id] {
-
-		if e := p.workerFn(ctx, v, ch, p.store[id]); e != nil {
+		if e := p.workerFn(ctx, v, p.sendResponseFn(ctx, ch), p.store[id]); e != nil {
 			err = fmt.Errorf("worker %d failed in flush: %w", id, e)
 			if !p.continueOnError {
 				return err
 			}
+			ch <- response{err: err}
 		}
 	}
 	p.buf[id] = p.buf[id][:0] // reset size to 0
 
 	// call completeFn for given worker id
 	if p.completeFn != nil {
-		if e := p.completeFn(ctx, ch, p.store[id]); e != nil {
+		if e := p.completeFn(ctx, p.store[id]); e != nil {
 			err = fmt.Errorf("complete func for %d failed: %w", id, e)
 		}
 	}
@@ -223,20 +234,6 @@ func (p *Workers) Close() {
 	for _, ch := range p.workersCh {
 		close(ch)
 	}
-}
-
-// ReadAll helper gets all records from the result channel
-func (p *Workers) ReadAll(ch <-chan Response) (res []interface{}, err error) {
-	for v := range ch {
-		if v.Error != nil {
-			err = v.Error
-			if !p.continueOnError {
-				return res, v.Error
-			}
-		}
-		res = append(res, v)
-	}
-	return res, err
 }
 
 // Wait till workers completed and result channel closed
@@ -256,14 +253,15 @@ func (p *Workers) Wait(ctx context.Context) (err error) {
 	}
 }
 
-// Send entry to channel or returns error if context canceled.
-// Shortcut for read-or-fail-on-cancel most handlers implement.
-func Send(ctx context.Context, resCh chan Response, res Response) error {
-	select {
-	case resCh <- res:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
+// sendResponseFn makes sender func used by worker
+func (p *Workers) sendResponseFn(ctx context.Context, respCh chan response) func(val interface{}) error {
+	return func(val interface{}) error {
+		select {
+		case respCh <- response{value: val}:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 	}
 }
 
