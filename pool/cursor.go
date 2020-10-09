@@ -2,7 +2,7 @@ package pool
 
 import "context"
 
-// Cursor provides synchronous access to async data from response channel
+// Cursor provides synchronous access to async data from pool's response channel
 type Cursor struct {
 	ch  chan response
 	err error
