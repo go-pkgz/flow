@@ -1,12 +1,28 @@
 // Package pool implements simplified, single-stage flow.
-// By default it runs non-buffered channels, randomly distributed pool, i.e. incoming records send to one of workers randomly.
-// User may define ChunkFn returning key portion of the record and in this case record will be send to workers based on this key
-// and identical keys guaranteed to be send to the same worker. Batch option sets size of internal buffer to minimize channel sends.
-// Batch collects incoming records per worker and send them in as a slice. Metrics can be retrieved by user
-// with Metrics and updated.
 //
-// Workers pool should not be reused and can be activated only once.
-// Thread safe, no additional locking needed.
+// By default it runs with non-buffered channels and randomly distributed pool, i.e. incoming records send to one of
+// the workers randomly. User creates pool.Worker, activates it by calling Go, submits input data via Submit. Go method
+// returns Cursor allowing retrieval of results one-by-one (with cursor.Next) or reading them all with cursor.All method.
+// Both cursor operation can be blocked as they read from the internal channel.
+//
+// After all inputs submitted user should call Close to indicate the completion.
+//
+// User may define ChunkFn returning key portion of the record and in this case record will be send to workers based on this key.
+// The identical keys guaranteed to be send to the same worker. Such mode needed for stateful flows where each set of input
+// records has to be processed sequentially and some state should be kept. Each worker gets an independent WorkerStore to keep
+// some worker-local data.
+//
+// The actual worker function WorkerFn provided by user and will be executed by pool's goroutines.
+// The worker will get an input record dispatched by the pool and could publish the result via SenderFn.
+//
+// Batch option sets size of internal buffer to minimize channel sends. Batch collects incoming records per worker and send
+// them in as a slice.
+//
+// Error handling by default terminates the pool on the first error, unless ContinueOnError requested.
+//
+// Metrics can be retrieved and updated by user to keep some counters associated with any names.
+//
+// Workers pool should not be reused and can be activated only once. Thread safe, no additional locking needed.
 package pool
 
 import (
@@ -184,13 +200,13 @@ func (p *Workers) Go(ctx context.Context) (Cursor, error) {
 		}
 	}
 
-	// start pool goroutines
+	// start all goroutines
 	for i := 0; i < p.poolSize; i++ {
 		p.eg.Go(worker(i, p.workersCh[i]))
 	}
 
 	go func() {
-		// wait for completion and close the channel
+		// wait for completion and close the response channel
 		if err := p.eg.Wait(); err != nil {
 			respCh <- response{err: err}
 		}
@@ -236,7 +252,8 @@ func (p *Workers) Close() {
 	}
 }
 
-// Wait till workers completed and result channel closed
+// Wait till workers completed and result channel closed. This can be used instead of the cursor
+// in case if the result channel can be ignored and the goal is to wait for the completion.
 func (p *Workers) Wait(ctx context.Context) (err error) {
 	doneCh := make(chan error)
 	go func() {
@@ -253,7 +270,7 @@ func (p *Workers) Wait(ctx context.Context) (err error) {
 	}
 }
 
-// sendResponseFn makes sender func used by worker
+// sendResponseFn makes sender func used by worker with the given context and response channel
 func (p *Workers) sendResponseFn(ctx context.Context, respCh chan response) func(val interface{}) error {
 	return func(val interface{}) error {
 		select {
@@ -265,7 +282,7 @@ func (p *Workers) sendResponseFn(ctx context.Context, respCh chan response) func
 	}
 }
 
-// Metrics from context
+// Metrics return set of metrics from the context
 func Metrics(ctx context.Context) *flow.Metrics {
 	res, ok := ctx.Value(flow.MetricsContextKey).(*flow.Metrics)
 	if !ok {
