@@ -25,10 +25,10 @@ func TestPool(t *testing.T) {
 			Fld string
 		}
 
-		worker := func(ctx context.Context, v interface{}, resCh chan Response, store WorkerStore) error {
+		worker := func(ctx context.Context, v interface{}, sender SenderFn, store WorkerStore) error {
 			rec := v.(inpRec)
 			if rec.Num%10 == 0 {
-				err := Send(ctx, resCh, Response{Value: fmt.Sprintf("%s-%03d", rec.Fld, rec.Num)})
+				err := sender(fmt.Sprintf("%s-%03d", rec.Fld, rec.Num))
 				require.NoError(t, err)
 			}
 			Metrics(ctx).Inc("count")
@@ -45,7 +45,9 @@ func TestPool(t *testing.T) {
 		p := New(poolSize, worker, opts...)
 
 		ctx := context.Background()
-		ch := p.Go(ctx)
+		cursor, err := p.Go(ctx)
+		require.NoError(t, err)
+
 		go func() {
 			for i := 0; i < 1000; i++ {
 				p.Submit(inpRec{Num: i, Fld: fmt.Sprintf("val-%03d", i)})
@@ -55,11 +57,13 @@ func TestPool(t *testing.T) {
 
 		n := 0
 		var res []string
-		for v := range ch {
+		var v interface{}
+		for cursor.Next(ctx, &v) {
 			log.Printf("%+v", v)
-			res = append(res, v.Value.(string))
+			res = append(res, v.(string))
 			n++
 		}
+		require.NoError(t, cursor.Err())
 		require.Equal(t, 100, n)
 		assert.Equal(t, 1000, p.Metrics().Get("count"))
 		sort.Strings(res)
@@ -104,6 +108,7 @@ func TestPool(t *testing.T) {
 		{poolSize: 8, batchSize: 345, workerChSize: 1, resChSize: 1},
 		{poolSize: 8, batchSize: 345, workerChSize: 0, resChSize: 0},
 		{poolSize: 0, batchSize: 345, workerChSize: 0, resChSize: 0},
+		{poolSize: 77, batchSize: 5, workerChSize: 1, resChSize: 1},
 	}
 
 	for i, tt := range tbl {
@@ -116,14 +121,15 @@ func TestPool(t *testing.T) {
 
 func TestPoolWithStore(t *testing.T) {
 
-	worker := func(ctx context.Context, v interface{}, resCh chan Response, store WorkerStore) error {
+	worker := func(ctx context.Context, v interface{}, send SenderFn, store WorkerStore) error {
 		store.Set("counter", store.GetInt("counter")+1)
 		Metrics(ctx).Add("c", 1)
+		require.NoError(t, send("something"))
 		return nil
 	}
 
 	var counts int64
-	completion := func(ctx context.Context, respCh chan Response, store WorkerStore) error {
+	completion := func(ctx context.Context, store WorkerStore) error {
 		count := store.GetInt("counter")
 		cc := atomic.AddInt64(&counts, int64(count))
 		assert.True(t, count > 0)
@@ -133,13 +139,14 @@ func TestPoolWithStore(t *testing.T) {
 
 	ctx := context.Background()
 
-	p := New(7, worker, OnCompletion(completion))
-	p.Go(ctx)
+	p := New(7, worker, OnCompletion(completion), ResChanSize(1001))
+	_, err := p.Go(ctx)
+	require.NoError(t, err)
 
 	go func() {
 		for i := 0; i < 1000; i++ {
 			p.Submit("line")
-			time.Sleep(time.Millisecond * time.Duration(rand.Intn(5))) //nolint gosec
+			time.Sleep(time.Millisecond * time.Duration(rand.Intn(3))) //nolint gosec
 		}
 		p.Close()
 	}()
@@ -154,10 +161,10 @@ func TestPoolWithStore(t *testing.T) {
 }
 
 func TestPoolCanceled(t *testing.T) {
-	worker := func(ctx context.Context, v interface{}, resCh chan Response, store WorkerStore) error {
+
+	worker := func(ctx context.Context, v interface{}, sender SenderFn, store WorkerStore) error {
 		time.Sleep(100 * time.Millisecond)
-		resCh <- Response{Value: v}
-		return nil
+		return sender(v)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond*500)
@@ -165,7 +172,8 @@ func TestPoolCanceled(t *testing.T) {
 
 	p := New(7, worker)
 
-	ch := p.Go(ctx)
+	cursor, err := p.Go(ctx)
+	require.NoError(t, err)
 
 	go func() {
 		for i := 0; i < 1000; i++ {
@@ -176,80 +184,84 @@ func TestPoolCanceled(t *testing.T) {
 	}()
 
 	n := 0
-	var err error
-	for v := range ch {
-		if v.Error != nil {
-			err = v.Error
-		}
+	var v interface{}
+	for cursor.Next(ctx, &v) {
 		n++
 	}
 	assert.True(t, n < 1000)
-	assert.EqualError(t, err, "context deadline exceeded")
+	assert.EqualError(t, cursor.Err(), "context deadline exceeded")
 	assert.EqualError(t, ctx.Err(), context.DeadlineExceeded.Error())
 }
 
 func TestPoolError(t *testing.T) {
-	worker := func(_ context.Context, v interface{}, resCh chan Response, store WorkerStore) error {
+	worker := func(ctx context.Context, v interface{}, sender SenderFn, store WorkerStore) error {
+		Metrics(ctx).Inc("calls")
 		if rand.Intn(10) > 5 { //nolint gosec
 			return errors.New("some error")
 		}
-		resCh <- Response{Value: v}
+		// require.NoError(t, sender(v))
 		return nil
 	}
 
 	p := New(7, worker, Batch(5), ResChanSize(1))
 
-	ch := p.Go(context.Background())
+	cursor, err := p.Go(context.Background())
+	require.NoError(t, err)
 
 	go func() {
 		for i := 0; i < 1000; i++ {
 			p.Submit("line")
 		}
 		p.Close()
+		t.Log("closed")
 	}()
 
-	vals, err := p.ReadAll(ch)
+	vals, err := cursor.All(context.Background())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "some error")
 	assert.True(t, len(vals) < 1000)
+	assert.True(t, p.Metrics().Get("calls") < 1000)
 
-	ch1 := p.Go(context.Background())
-	r := <-ch1
-	assert.EqualError(t, r.Error, "workers poll already activated")
+	_, err = p.Go(context.Background())
+	assert.EqualError(t, err, "workers poll already activated")
 }
 
 func TestPoolErrorContinue(t *testing.T) {
-	var c int64
-	worker := func(_ context.Context, v interface{}, resCh chan Response, store WorkerStore) error {
-		atomic.AddInt64(&c, 1)
-		var e error
+
+	worker := func(ctx context.Context, v interface{}, sender SenderFn, store WorkerStore) error {
+		Metrics(ctx).Inc("calls")
 		if rand.Intn(10) > 5 { //nolint gosec
-			e = errors.New("some error")
+			Metrics(ctx).Inc("errs")
+			return errors.New("some error")
 		}
-		resCh <- Response{Value: v, Error: e}
+		require.NoError(t, sender(v))
+		Metrics(ctx).Inc("sent")
+		time.Sleep(time.Duration(rand.Intn(10)) * time.Millisecond) //nolint
+
 		return nil
 	}
 
-	p := New(7, worker, Batch(5), ResChanSize(1), ContinueOnError)
-
-	ch := p.Go(context.Background())
+	p := New(56, worker, Batch(11), ResChanSize(1), ContinueOnError)
+	cursor, err := p.Go(context.Background())
+	require.NoError(t, err)
 
 	go func() {
 		for i := 0; i < 1000; i++ {
 			p.Submit("line")
+			time.Sleep(time.Duration(rand.Intn(1000)) * time.Nanosecond) //nolint
 		}
 		p.Close()
 	}()
 
-	vals, err := p.ReadAll(ch)
-	require.Error(t, err)
+	vals, err := cursor.All(context.Background())
+	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "some error")
-	assert.Equal(t, 1000, len(vals))
+	assert.Equal(t, 1000, p.Metrics().Get("calls"), "workers called 1000 times")
+	assert.Equal(t, 1000-p.Metrics().Get("errs"), len(vals), "all valid responses retrieved")
 
-	assert.Equal(t, int64(1000), atomic.LoadInt64(&c))
-	ch1 := p.Go(context.Background())
-	r := <-ch1
-	assert.EqualError(t, r.Error, "workers poll already activated")
+	t.Logf("%s", p.Metrics())
+	_, err = p.Go(context.Background())
+	assert.EqualError(t, err, "workers poll already activated")
 }
 
 func TestWorkers_SubmitWithChunks(t *testing.T) {
@@ -268,7 +280,7 @@ func TestWorkers_SubmitWithChunks(t *testing.T) {
 		{"xxxx", 2, [][]interface{}{{}, {"xxxx"}}},
 	}
 
-	wk := func(ctx context.Context, inpRec interface{}, respCh chan Response, store WorkerStore) error {
+	wk := func(ctx context.Context, inpRec interface{}, sender SenderFn, store WorkerStore) error {
 		return nil
 	}
 
@@ -288,7 +300,7 @@ func TestWorkers_SubmitWithChunks(t *testing.T) {
 
 func TestWorkers_SubmitNoChunkFn(t *testing.T) {
 
-	wk := func(ctx context.Context, inpRec interface{}, respCh chan Response, store WorkerStore) error {
+	wk := func(ctx context.Context, inpRec interface{}, sender SenderFn, store WorkerStore) error {
 		return nil
 	}
 
@@ -310,7 +322,7 @@ func TestWorkers_SubmitNoChunkFn(t *testing.T) {
 // illustrates basic use of workers pool
 func ExampleWorkers_basic() {
 
-	workerFn := func(ctx context.Context, inpRec interface{}, respCh chan Response, store WorkerStore) error {
+	workerFn := func(ctx context.Context, inpRec interface{}, sender SenderFn, store WorkerStore) error {
 		v, ok := inpRec.(string)
 		if !ok {
 			return errors.New("incorrect input type")
@@ -319,11 +331,14 @@ func ExampleWorkers_basic() {
 		res := strings.ToUpper(v)
 
 		// send response
-		return Send(ctx, respCh, Response{Value: res})
+		return sender(res)
 	}
 
 	p := New(8, workerFn) // create workers pool
-	resp := p.Go(context.Background())
+	cursor, err := p.Go(context.Background())
+	if err != nil {
+		panic(err)
+	}
 
 	// send some records in
 	go func() {
@@ -334,14 +349,14 @@ func ExampleWorkers_basic() {
 	}()
 
 	// consume results
-	recs, err := p.ReadAll(resp)
+	recs, err := cursor.All(context.TODO())
 	log.Printf("%+v, %v", recs, err)
 }
 
 // illustrates use of workers pool with all options
 func ExampleWorkers_withOptions() {
 
-	workerFn := func(ctx context.Context, inpRec interface{}, respCh chan Response, store WorkerStore) error {
+	workerFn := func(ctx context.Context, inpRec interface{}, sender SenderFn, store WorkerStore) error {
 		v, ok := inpRec.(string)
 		if !ok {
 			return errors.New("incorrect input type")
@@ -354,7 +369,7 @@ func ExampleWorkers_withOptions() {
 		m.Inc("count")
 
 		// send response
-		return Send(ctx, respCh, Response{Value: res})
+		return sender(res)
 	}
 
 	// create workers pool with chunks and batch mode. ChunkFn used to detect worker and guaranteed to send same chunk
@@ -364,8 +379,11 @@ func ExampleWorkers_withOptions() {
 		v := val.(string)
 		return v[:4] // chunks by 4chars prefix
 	}))
-	resp := p.Go(context.Background())
 
+	cursor, err := p.Go(context.Background())
+	if err != nil {
+		panic(err)
+	}
 	// send some records in
 	go func() {
 		p.Submit("rec1")
@@ -375,11 +393,9 @@ func ExampleWorkers_withOptions() {
 	}()
 
 	// consume results in streaming mode
-	for r := range resp {
-		if r.Error != nil {
-			panic(r.Error)
-		}
-		log.Printf("%v", r.Value)
+	var v interface{}
+	for cursor.Next(context.TODO(), &v) {
+		log.Printf("%v", v)
 	}
 
 	// show metrics

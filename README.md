@@ -202,8 +202,11 @@ func ExampleFlow_parallel() {
 
 ## Details about `pool` package
 
-- In addition to the default "run a func in multiple goroutines" mode, it also provides an optional support of chunked workers. It means - each key, detected by user-provide func guaranteed to be processed by the same worker. Such mode needed for stateful flows where each set of input records has to be processed sequentially and some state should be kept.
-- another thing `pool` provides is a batch size. This one is a simple performance optimization keeping input request into a buffer and send them to worker channel in batches (slices) instead of per-submit call
+Pool package provides thin implementation of workers pool. In addition to the default "run a func in multiple goroutines" mode, 
+it also provides an optional support of chunked workers. In this mode each key, detected by user-provide func, guaranteed to be 
+processed by the same worker. Such mode needed for stateful flows where each set of input records has to be processed sequentially
+and some state should be kept. Another thing `pool` allows to define is the batch size. This one is a simple performance optimization
+collecting input request into a buffer and send them to worker channel in batches (slices) instead of per-submit call.
 
 Options:
 
@@ -212,16 +215,17 @@ Options:
 - `ChanResSize` sets the size of output buffered channel (default 1)
 - `ChanWorkerSize` sets the size of workers buffered channel (default 1)
 - `ContinueOnError` allows workers continuation after error occurred
-- `OnCompletion` sets callback for each worker called on successful completion
+- `OnCompletion` sets callback (for each worker) called on successful completion
 
 ### worker function
 
-Worker function passed by user and will run in multiple workers (goroutines). 
-This is the function: `type workerFn func(ctx context.Context, inp interface{}, resCh interface{}, store WorkerStore} error`
+Worker function passed by user and runs in multiple workers (goroutines) concurrently. 
+This is the function: `type workerFn func(ctx context.Context, inp interface{}, sender SenderFn, store WorkerStore} error`
 
-It takes `inp` parameter, does the job and optionally send result(s) to `resCh`. Error will terminate all workers.
-Note: `workerFn` can be stateful, collect anything it needs and sends 0 or more results. Results wrapped in `Response` struct
-allowing to communicate error code back to consumer.  `workerFn` doesn't need to send errors, enough just return non-nil error.
+It takes `inp` parameter, does the job and optionally send result(s) with `SenderFn` to the common results channel. 
+Error will terminate all workers unless `ContinueOnError` set.
+
+Note: `workerFn` can be stateful, collect anything it needs and sends 0 or more results by calling `SenderFn` one or more times.
  
 ### worker store
 
@@ -245,7 +249,7 @@ _alternatively state can be kept outside of workers as a slice of values and acc
 ### usage
 
 ```go
-    p := pool.New(8, func(ctx context.Context, v interface{}, resCh interface{}, ws pool.WorkerStore} error {
+    p := pool.New(8, func(ctx context.Context, v interface{}, sendFn pool.Sender, ws pool.WorkerStore} error {
         // worker function gets input v processes it and response(s) channel to send results
 
         input, ok := v.(string) // in this case it gets string as input
@@ -256,15 +260,15 @@ _alternatively state can be kept outside of workers as a slice of values and acc
         // ...
        
         v := ws.GetInt("something")  // access thread-local var
-                
-	    resCh <- pool.Response{Data: "foo"}
-	    resCh <- pool.Response{Data: "bar"}
+           
+        sendFn("foo", nil) // send "foo" and nil error     
+        sendFn("bar", nil) // send "foo" and nil error     
         pool.Metrics(ctx).Inc("counter")
         ws.Set("something", 1234) // keep thread-local things
        return "something", true, nil
     })
     
-    ch := p.Go(context.TODO()) // start all workers in 8 goroutines
+    cursor, err := p.Go(context.TODO()) // start all workers in 8 goroutines and get back result's cursor
     
     // submit values (consumer side)
     go func() {
@@ -273,15 +277,17 @@ _alternatively state can be kept outside of workers as a slice of values and acc
         p.Close() // indicates completion of all inputs
     }()   
 
-    for rec := range ch {
-        if rec.Errors != nil { // error happened
-            return err
-        } 
-        log.Print(rec.Data)  // print value      
+    var v interface{}
+    for cursor(ctx, &v) {
+        log.Print(v)  // print value
     }
+    
+    if cursor.Err() != nil { // error happened
+        return cursor.Err()
+    } 
 
-    // alternatively ReadAll helper can be used to get everything from response channel
-    res, err := pool.ReadAll(ch)
+    // alternatively read all from the cursor (response channel)
+    res, err := cursor.All(ctx)
 
     // metrics the same as for flow
     metrics := pool.Metrics()
