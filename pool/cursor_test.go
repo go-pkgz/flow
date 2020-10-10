@@ -10,27 +10,41 @@ import (
 )
 
 func TestCursor_Next(t *testing.T) {
-	c := Cursor{ch: make(chan response, 3)}
+
+	type structExample struct {
+		k1 int
+		k2 string
+		k3 []bool
+	}
+
+	c := Cursor{ch: make(chan response, 4)}
 
 	c.ch <- response{value: "12345"}
 	c.ch <- response{value: "abc"}
-	c.ch <- response{value: "xyz 0987"}
+	c.ch <- response{value: 1234.567}
+	c.ch <- response{value: structExample{k1: 12, k2: "abcd", k3: []bool{true, false}}}
 	close(c.ch)
 
-	var v interface{}
-	next := c.Next(context.Background(), &v)
+	var s string
+	next := c.Next(context.Background(), &s)
 	assert.True(t, next)
-	assert.Equal(t, "12345", v.(string))
+	assert.Equal(t, "12345", s)
 
-	next = c.Next(context.Background(), &v)
+	next = c.Next(context.Background(), &s)
 	assert.True(t, next)
-	assert.Equal(t, "abc", v.(string))
+	assert.Equal(t, "abc", s)
 
-	next = c.Next(context.Background(), &v)
+	var f float64
+	next = c.Next(context.Background(), &f)
 	assert.True(t, next)
-	assert.Equal(t, "xyz 0987", v.(string))
+	assert.Equal(t, 1234.567, f)
 
-	next = c.Next(context.Background(), &v)
+	var ss structExample
+	next = c.Next(context.Background(), &ss)
+	assert.True(t, next)
+	assert.Equal(t, structExample{k1: 12, k2: "abcd", k3: []bool{true, false}}, ss)
+
+	next = c.Next(context.Background(), nil)
 	assert.False(t, next)
 }
 

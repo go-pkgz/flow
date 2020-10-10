@@ -1,6 +1,10 @@
 package pool
 
-import "context"
+import (
+	"context"
+	"errors"
+	"reflect"
+)
 
 // Cursor provides synchronous access to async data from pool's response channel
 type Cursor struct {
@@ -10,7 +14,7 @@ type Cursor struct {
 
 // Next returns next result from the cursor, ok = false on completion.
 // Any error saved internally and can be returned by Err call
-func (c *Cursor) Next(ctx context.Context, v *interface{}) bool {
+func (c *Cursor) Next(ctx context.Context, v interface{}) bool {
 	for {
 		select {
 		case resp, ok := <-c.ch:
@@ -21,7 +25,14 @@ func (c *Cursor) Next(ctx context.Context, v *interface{}) bool {
 				c.err = resp.err
 				continue
 			}
-			*v = resp.value
+
+			rv := reflect.ValueOf(v)
+			if rv.Kind() != reflect.Ptr || rv.IsNil() {
+				c.err = errors.New("value type is not pointer")
+				return false
+			}
+			dstValue := reflect.Indirect(rv)
+			dstValue.Set(reflect.ValueOf(resp.value))
 			return ok
 		case <-ctx.Done():
 			c.err = ctx.Err()

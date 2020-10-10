@@ -119,6 +119,45 @@ func TestPool(t *testing.T) {
 	}
 }
 
+func TestPoolWithStruct(t *testing.T) {
+
+	type resp struct {
+		k1 string
+		k2 int
+		k3 string
+		k4 []string
+		k5 bool
+	}
+
+	p := New(4, func(ctx context.Context, inpRec interface{}, sender SenderFn, store WorkerStore) error {
+		i := inpRec.(int)
+		r := resp{k1: "rec" + strconv.Itoa(i), k2: i, k3: "something", k4: []string{"foo", "bar"}, k5: true}
+		return sender(r)
+	})
+
+	go func() {
+		for i := 0; i < 1000; i++ {
+			p.Submit(i)
+			time.Sleep(time.Millisecond * time.Duration(rand.Intn(3))) //nolint gosec
+		}
+		p.Close()
+	}()
+	c, err := p.Go(context.Background())
+	require.NoError(t, err)
+
+	var recs []resp
+	var v resp
+	for c.Next(context.Background(), &v) {
+		recs = append(recs, v)
+	}
+	require.NoError(t, c.Err())
+	assert.Equal(t, 1000, len(recs))
+
+	sort.Slice(recs, func(i, j int) bool { return recs[i].k2 < recs[j].k2 })
+	assert.Equal(t, resp{k1: "rec0", k2: 0, k3: "something", k4: []string{"foo", "bar"}, k5: true}, recs[0])
+	assert.Equal(t, resp{k1: "rec999", k2: 999, k3: "something", k4: []string{"foo", "bar"}, k5: true}, recs[999])
+}
+
 func TestPoolWithStore(t *testing.T) {
 
 	worker := func(ctx context.Context, v interface{}, send SenderFn, store WorkerStore) error {
@@ -393,9 +432,9 @@ func ExampleWorkers_withOptions() {
 	}()
 
 	// consume results in streaming mode
-	var v interface{}
+	var v string
 	for cursor.Next(context.TODO(), &v) {
-		log.Printf("%v", v)
+		log.Printf("%s", v)
 	}
 
 	// show metrics
