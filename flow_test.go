@@ -198,7 +198,7 @@ func seedHandler(_ context.Context, _ chan interface{}) (chan interface{}, func(
 	return inp, nil
 }
 
-func multiplierHandler(mult int, cancelOn int) Handler {
+func multiplierHandler(mult, cancelOn int) Handler {
 
 	fn := func(ctx context.Context, ch chan interface{}) (chan interface{}, func() error) {
 		resCh := make(chan interface{})
