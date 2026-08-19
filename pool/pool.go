@@ -31,6 +31,7 @@ import (
 	"fmt"
 	"hash/crc32"
 	"math/rand"
+	"sync"
 	"time"
 
 	"github.com/go-pkgz/flow"
@@ -52,7 +53,9 @@ type Workers struct {
 	store []WorkerStore // workers store, per worker ID
 
 	buf       [][]interface{}
+	bufLock   []sync.Mutex // guards buf, per worker ID
 	workersCh []chan []interface{}
+	abortCh   chan struct{} // closed on pool termination, releases blocked submits
 	ctx       context.Context
 	eg        *errgroup.Group
 }
@@ -99,6 +102,8 @@ func New(poolSize int, workerFn WorkerFn, options ...Option) *Workers {
 		poolSize:       poolSize,
 		workersCh:      make([]chan []interface{}, poolSize),
 		buf:            make([][]interface{}, poolSize),
+		bufLock:        make([]sync.Mutex, poolSize),
+		abortCh:        make(chan struct{}),
 		store:          make([]WorkerStore, poolSize),
 		workerFn:       workerFn,
 		completeFn:     nil,
@@ -126,7 +131,9 @@ func New(poolSize int, workerFn WorkerFn, options ...Option) *Workers {
 	return &res
 }
 
-// Submit record to pool, can be blocked
+// Submit record to pool, can be blocked until the record accepted by a worker or the pool terminated.
+// Submits after termination, i.e. after a worker failed or the context canceled, don't block and the
+// records may be dropped as the workers are shutting down.
 func (p *Workers) Submit(v interface{}) {
 
 	// randomize distribution by default
@@ -138,17 +145,29 @@ func (p *Workers) Submit(v interface{}) {
 
 	if p.batchSize <= 1 {
 		// skip all buffering if batch size is 1 or less
-		p.workersCh[id] <- append([]interface{}{}, v)
+		p.send(id, append([]interface{}{}, v))
 		return
 	}
+
+	p.bufLock[id].Lock() // batch buffer shared by all submitting goroutines
+	defer p.bufLock[id].Unlock()
 
 	p.buf[id] = append(p.buf[id], v) // add to batch buffer
 	if len(p.buf[id]) >= p.batchSize {
 		// commit copy to workers
 		cp := make([]interface{}, len(p.buf[id]))
 		copy(cp, p.buf[id])
-		p.workersCh[id] <- cp
+		p.send(id, cp)
 		p.buf[id] = p.buf[id][:0] // reset size, keep capacity
+	}
+}
+
+// send records to the worker with a given id, drops them if the pool terminated and nothing reads workers channels.
+// Both cases can be ready on termination, i.e. a shutting down worker may still get the records.
+func (p *Workers) send(id int, vals []interface{}) {
+	select {
+	case p.workersCh[id] <- vals:
+	case <-p.abortCh:
 	}
 }
 
@@ -204,6 +223,12 @@ func (p *Workers) Go(ctx context.Context) (Cursor, error) {
 	for i := 0; i < p.poolSize; i++ {
 		p.eg.Go(worker(i, p.workersCh[i]))
 	}
+
+	go func() {
+		// release submits blocked on workers channels as soon as the pool terminated
+		<-egCtx.Done()
+		close(p.abortCh)
+	}()
 
 	go func() {
 		// wait for completion and close the response channel
