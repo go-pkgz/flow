@@ -212,15 +212,16 @@ Options:
 
 - `ChunkFn` - the function returns string identifying the chunk
 - `Batch` - sets batch size (default 1)
-- `ChanResSize` sets the size of output buffered channel (default 1)
-- `ChanWorkerSize` sets the size of workers buffered channel (default 1)
+- `ResChanSize` sets the size of the results channel (default 0, i.e. unbuffered)
+- `WorkerChanSize` sets the size of workers channels (default 0, i.e. unbuffered)
 - `ContinueOnError` allows workers continuation after error occurred
-- `OnCompletion` sets callback (for each worker) called on successful completion
+- `OnCompletion` sets callback called for each worker after its input channel closed and drained. A worker
+terminated early, by an error with the default fail-fast or by a canceled context, doesn't get it.
 
 ### worker function
 
 Worker function passed by user and runs in multiple workers (goroutines) concurrently. 
-This is the function: `type workerFn func(ctx context.Context, inp interface{}, sender SenderFn, store WorkerStore} error`
+This is the function: `type WorkerFn func(ctx context.Context, inpRec interface{}, sender SenderFn, store WorkerStore) error`
 
 It takes `inp` parameter, does the job and optionally send result(s) with `SenderFn` to the common results channel. 
 Error will terminate all workers unless `ContinueOnError` set.
@@ -229,7 +230,8 @@ Note: `workerFn` can be stateful, collect anything it needs and sends 0 or more 
  
 ### worker store
 
-Each worker gets `WorkerStore` and can be used as thread-safe per-worker storage for any intermediate results.
+Each worker gets `WorkerStore` and can be used as per-worker storage for any intermediate results. The store
+is not synchronised internally, it doesn't need to be as only the owning worker touches it.
 
 ```go
 type WorkerStore interface {
@@ -249,47 +251,57 @@ _alternatively state can be kept outside of workers as a slice of values and acc
 ### usage
 
 ```go
-    p := pool.New(8, func(ctx context.Context, v interface{}, sendFn pool.Sender, ws pool.WorkerStore} error {
-        // worker function gets input v processes it and response(s) channel to send results
+    p := pool.New(8, func(ctx context.Context, v interface{}, sendFn pool.SenderFn, ws pool.WorkerStore) error {
+        // worker function gets input v, processes it and sends result(s) to the common results channel
 
         input, ok := v.(string) // in this case it gets string as input
         if !ok {
             return errors.New("incorrect input type")
-        }   
+        }
         // do something with input
         // ...
-       
-        v := ws.GetInt("something")  // access thread-local var
-           
-        sendFn("foo", nil) // send "foo" and nil error     
-        sendFn("bar", nil) // send "foo" and nil error     
+
+        count := ws.GetInt("something") // access worker-local var
+
+        if err := sendFn(input + " processed"); err != nil { // send the result
+            return err
+        }
+        if err := sendFn(input + " processed again"); err != nil { // 0 or more results per input
+            return err
+        }
         pool.Metrics(ctx).Inc("counter")
-        ws.Set("something", 1234) // keep thread-local things
-       return "something", true, nil
+        ws.Set("something", count+1) // keep worker-local things
+        return nil
     })
-    
-    cursor, err := p.Go(context.TODO()) // start all workers in 8 goroutines and get back result's cursor
-    
-    // submit values (consumer side)
+
+    cursor, err := p.Go(ctx) // start all workers in 8 goroutines and get back result's cursor
+    if err != nil {
+        return err
+    }
+
+    // submit values (producer side)
     go func() {
         p.Submit("something")
         p.Submit("something else")
         p.Close() // indicates completion of all inputs
-    }()   
+    }()
 
     var v interface{}
-    for cursor(ctx, &v) {
+    for cursor.Next(ctx, &v) {
         log.Print(v)  // print value
     }
-    
+
     if cursor.Err() != nil { // error happened
         return cursor.Err()
-    } 
-
-    // alternatively read all from the cursor (response channel)
-    res, err := cursor.All(ctx)
+    }
 
     // metrics the same as for flow
-    metrics := pool.Metrics()
+    metrics := p.Metrics()
     log.Print(metrics.Get("counter"))
+```
+
+Instead of the `Next` loop everything can be read from the cursor at once:
+
+```go
+    res, err := cursor.All(ctx)
 ```
