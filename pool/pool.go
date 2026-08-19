@@ -58,6 +58,8 @@ type Workers struct {
 	abortCh   chan struct{} // closed on pool termination, releases blocked submits
 	ctx       context.Context
 	eg        *errgroup.Group
+
+	respCh chan response // results from workers, set by Go
 }
 
 // response wraps data and error
@@ -178,6 +180,7 @@ func (p *Workers) Go(ctx context.Context) (Cursor, error) {
 	}
 
 	respCh := make(chan response, p.resChanSize)
+	p.respCh = respCh // keep the channel to allow Wait to drain results
 	p.ctx = context.WithValue(ctx, flow.MetricsContextKey, flow.NewMetrics())
 	var egCtx context.Context
 	p.eg, egCtx = errgroup.WithContext(ctx)
@@ -279,16 +282,18 @@ func (p *Workers) Close() {
 
 // Wait till workers completed and result channel closed. This can be used instead of the cursor
 // in case if the result channel can be ignored and the goal is to wait for the completion.
-func (p *Workers) Wait(ctx context.Context) (err error) {
-	doneCh := make(chan error)
-	go func() {
-		doneCh <- p.eg.Wait()
-	}()
+// Responses are drained and discarded, i.e. Wait and the cursor are mutually exclusive.
+func (p *Workers) Wait(ctx context.Context) error {
+	if p.eg == nil {
+		return errors.New("workers poll not activated")
+	}
 
 	for {
 		select {
-		case err := <-doneCh:
-			return err
+		case _, ok := <-p.respCh:
+			if !ok { // response channel closed by the pool, all workers done
+				return p.eg.Wait()
+			}
 		case <-ctx.Done():
 			return ctx.Err()
 		}
