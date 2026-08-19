@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"math/rand"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -146,47 +147,91 @@ func TestFlowWithInputAndSecondFlow(t *testing.T) {
 }
 
 func TestFlowWithTimeout(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
 
+	const workers = 40
+	var processed int64
+	proceed := make(chan struct{}, workers) // releases as many inputs as there are workers and no more
+
 	slowHandler := func(ctx context.Context, ch chan interface{}) (chan interface{}, func() error) {
-		st := time.Now()
 		resCh := make(chan interface{})
 		resFn := func() error {
 			defer close(resCh)
-			processed := 0
 			for inp := range ch {
 
-				// slow operation
+				// slow operation, released by the test rather than by the clock
 				select {
 				case <-ctx.Done():
-					log.Printf("error %s, [%02d] - %d", ctx.Err(), CID(ctx), processed)
+					log.Printf("error %s, [%02d]", ctx.Err(), CID(ctx))
 					return ctx.Err()
-				case <-time.After(time.Second):
+				case <-proceed:
 				}
 
-				resCh <- inp
-				processed++
-
+				atomic.AddInt64(&processed, 1)
+				if err := Send(ctx, resCh, inp); err != nil {
+					return err
+				}
 			}
-			log.Println("slow handler completed", CID(ctx), time.Since(st), processed)
 			return nil
 		}
 		return resCh, resFn
 	}
 
+	for i := 0; i < workers; i++ {
+		proceed <- struct{}{}
+	}
+
 	f := New(Context(ctx))
 	f.Add(
 		seedHandler,
-		f.Parallel(40, slowHandler),
+		f.Parallel(workers, slowHandler),
 		collectorHandler,
 	)
 
-	st := time.Now()
-	err := f.Go().Wait()
-	t.Logf("%s", time.Since(st))
-	assert.EqualError(t, err, "context deadline exceeded")
-	assert.True(t, time.Since(st) < 3010*time.Millisecond)
+	assert.EqualError(t, f.Go().Wait(), "context deadline exceeded")
+	// the deadline aborts the flow, the 100 seeded inputs are never drained
+	assert.True(t, atomic.LoadInt64(&processed) <= workers, "processed %d", atomic.LoadInt64(&processed))
+}
+
+// merge blocks sending to the next stage until the flow canceled, the stage below never reads
+func TestFlowParallelCanceledOnMerge(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	sent := make(chan struct{})
+	emitter := func(ctx context.Context, _ chan interface{}) (chan interface{}, func() error) {
+		outCh := make(chan interface{})
+		return outCh, func() error {
+			defer close(outCh)
+			if CID(ctx) != 0 { // the second worker closes its channel without emitting anything
+				return nil
+			}
+			if err := Send(ctx, outCh, 1); err != nil {
+				return err
+			}
+			close(sent)
+			return nil
+		}
+	}
+
+	// consumes nothing from the input channel, so the merged records have nowhere to go
+	stalled := func(ctx context.Context, _ chan interface{}) (chan interface{}, func() error) {
+		outCh := make(chan interface{})
+		return outCh, func() error {
+			defer close(outCh)
+			<-ctx.Done()
+			return ctx.Err()
+		}
+	}
+
+	f := New(Context(ctx))
+	f.Add(f.Parallel(2, emitter), stalled)
+
+	res := f.Go()
+	<-sent
+	cancel()
+	assert.EqualError(t, res.Wait(), "context canceled")
 }
 
 func seedHandler(_ context.Context, _ chan interface{}) (chan interface{}, func() error) {
