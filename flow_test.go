@@ -61,8 +61,8 @@ func TestFlowWithFanOut(t *testing.T) {
 	f := New()
 
 	f.Add(
-		func(ctx context.Context, ch chan interface{}) (chan interface{}, func() error) {
-			inp := make(chan interface{}, 100)
+		func(ctx context.Context, ch chan any) (chan any, func() error) {
+			inp := make(chan any, 100)
 			for i := 1; i <= 100; i++ {
 				inp <- 1
 			}
@@ -90,8 +90,8 @@ func TestFlowWithFanOutAndParallel(t *testing.T) {
 	f := New(FanOutSize(10))
 
 	f.Add(
-		func(ctx context.Context, ch chan interface{}) (chan interface{}, func() error) {
-			inp := make(chan interface{}, 100)
+		func(ctx context.Context, ch chan any) (chan any, func() error) {
+			inp := make(chan any, 100)
 			for i := 1; i <= 100; i++ {
 				inp <- 1
 			}
@@ -119,7 +119,7 @@ func TestFlowWithFanOutAndParallel(t *testing.T) {
 
 func TestFlowWithInputAndSecondFlow(t *testing.T) {
 
-	inp := make(chan interface{}, 100)
+	inp := make(chan any, 100)
 	for i := 1; i <= 100; i++ {
 		inp <- 1
 	}
@@ -154,8 +154,8 @@ func TestFlowWithTimeout(t *testing.T) {
 	var processed int64
 	proceed := make(chan struct{}, workers) // releases as many inputs as there are workers and no more
 
-	slowHandler := func(ctx context.Context, ch chan interface{}) (chan interface{}, func() error) {
-		resCh := make(chan interface{})
+	slowHandler := func(ctx context.Context, ch chan any) (chan any, func() error) {
+		resCh := make(chan any)
 		resFn := func() error {
 			defer close(resCh)
 			for inp := range ch {
@@ -178,7 +178,7 @@ func TestFlowWithTimeout(t *testing.T) {
 		return resCh, resFn
 	}
 
-	for i := 0; i < workers; i++ {
+	for range workers {
 		proceed <- struct{}{}
 	}
 
@@ -200,8 +200,8 @@ func TestFlowParallelCanceledOnMerge(t *testing.T) {
 	defer cancel()
 
 	sent := make(chan struct{})
-	emitter := func(ctx context.Context, _ chan interface{}) (chan interface{}, func() error) {
-		outCh := make(chan interface{})
+	emitter := func(ctx context.Context, _ chan any) (chan any, func() error) {
+		outCh := make(chan any)
 		return outCh, func() error {
 			defer close(outCh)
 			if CID(ctx) != 0 { // the second worker closes its channel without emitting anything
@@ -216,8 +216,8 @@ func TestFlowParallelCanceledOnMerge(t *testing.T) {
 	}
 
 	// consumes nothing from the input channel, so the merged records have nowhere to go
-	stalled := func(ctx context.Context, _ chan interface{}) (chan interface{}, func() error) {
-		outCh := make(chan interface{})
+	stalled := func(ctx context.Context, _ chan any) (chan any, func() error) {
+		outCh := make(chan any)
 		return outCh, func() error {
 			defer close(outCh)
 			<-ctx.Done()
@@ -234,8 +234,8 @@ func TestFlowParallelCanceledOnMerge(t *testing.T) {
 	assert.EqualError(t, res.Wait(), "context canceled")
 }
 
-func seedHandler(_ context.Context, _ chan interface{}) (chan interface{}, func() error) {
-	inp := make(chan interface{}, 100)
+func seedHandler(_ context.Context, _ chan any) (chan any, func() error) {
+	inp := make(chan any, 100)
 	for i := 1; i <= 100; i++ {
 		inp <- i
 	}
@@ -245,8 +245,8 @@ func seedHandler(_ context.Context, _ chan interface{}) (chan interface{}, func(
 
 func multiplierHandler(mult, cancelOn int) Handler {
 
-	fn := func(ctx context.Context, ch chan interface{}) (chan interface{}, func() error) {
-		resCh := make(chan interface{})
+	fn := func(ctx context.Context, ch chan any) (chan any, func() error) {
+		resCh := make(chan any)
 		metrics := ctx.Value(MetricsContextKey).(*Metrics)
 
 		resFn := func() error {
@@ -277,8 +277,8 @@ func multiplierHandler(mult, cancelOn int) Handler {
 	return fn
 }
 
-func collectorHandler(ctx context.Context, ch chan interface{}) (chOut chan interface{}, fnRun func() error) {
-	resCh := make(chan interface{}, 1)
+func collectorHandler(ctx context.Context, ch chan any) (chOut chan any, fnRun func() error) {
+	resCh := make(chan any, 1)
 
 	calls := 0
 	resFn := func() error {
@@ -315,9 +315,9 @@ func ExampleFlow_flow() {
 	f.Add(     // add handlers. Note: handlers can be added directly in New
 
 		// generate 100 initial values.
-		func(ctx context.Context, in chan interface{}) (out chan interface{}, runFn func() error) {
+		func(ctx context.Context, in chan any) (out chan any, runFn func() error) {
 			// example of non-async handler, Add executes it right away, prior to Go call
-			out = make(chan interface{}, 100)
+			out = make(chan any, 100)
 			for i := 1; i <= 100; i++ {
 				out <- i
 			}
@@ -326,9 +326,9 @@ func ExampleFlow_flow() {
 		},
 
 		// pick odd numbers only and multiply
-		func(ctx context.Context, in chan interface{}) (out chan interface{}, runFn func() error) {
-			out = make(chan interface{}) // each handler makes its out channel
-			runFn = func() error {       // async handler returns runnable func
+		func(ctx context.Context, in chan any) (out chan any, runFn func() error) {
+			out = make(chan any)   // each handler makes its out channel
+			runFn = func() error { // async handler returns runnable func
 				defer close(out) // handler should close out channel
 				for e := range in {
 					val := e.(int)
@@ -348,8 +348,8 @@ func ExampleFlow_flow() {
 		},
 
 		// sum all numbers
-		func(ctx context.Context, in chan interface{}) (out chan interface{}, runFn func() error) {
-			out = make(chan interface{}, 1)
+		func(ctx context.Context, in chan any) (out chan any, runFn func() error) {
+			out = make(chan any, 1)
 			runFn = func() error {
 				defer close(out)
 				sum := 0
@@ -389,8 +389,8 @@ func ExampleFlow_parallel() {
 	f.Add(
 
 		// generate 100 initial values in single handler
-		func(ctx context.Context, in chan interface{}) (out chan interface{}, runFn func() error) {
-			out = make(chan interface{}, 100) // example of non-async handler
+		func(ctx context.Context, in chan any) (out chan any, runFn func() error) {
+			out = make(chan any, 100) // example of non-async handler
 			for i := 1; i <= 100; i++ {
 				out <- i
 			}
@@ -399,8 +399,8 @@ func ExampleFlow_parallel() {
 		},
 
 		// multiple all numbers in 10 parallel handlers
-		f.Parallel(10, func(ctx context.Context, in chan interface{}) (out chan interface{}, runFn func() error) {
-			out = make(chan interface{}) // async handler makes its out channel
+		f.Parallel(10, func(ctx context.Context, in chan any) (out chan any, runFn func() error) {
+			out = make(chan any) // async handler makes its out channel
 			runFn = func() error {
 				defer close(out) // handler should close out channel
 				for e := range in {
@@ -418,7 +418,7 @@ func ExampleFlow_parallel() {
 		}),
 
 		// print all numbers
-		func(ctx context.Context, in chan interface{}) (out chan interface{}, runFn func() error) {
+		func(ctx context.Context, in chan any) (out chan any, runFn func() error) {
 			runFn = func() error {
 				defer close(out)
 				sum := 0
@@ -452,8 +452,8 @@ func ExampleFlow_fanOut() {
 	f.Add( // add handlers. Note: handlers can be added directly in New
 
 		// generate 100 ones.
-		func(ctx context.Context, in chan interface{}) (out chan interface{}, runFn func() error) {
-			out = make(chan interface{}, 100) // example of non-async handler
+		func(ctx context.Context, in chan any) (out chan any, runFn func() error) {
+			out = make(chan any, 100) // example of non-async handler
 			for i := 1; i <= 100; i++ {
 				out <- 1
 			}
@@ -466,8 +466,8 @@ func ExampleFlow_fanOut() {
 		f.FanOut(
 
 			// first handler picks odd numbers only and multiply by 2
-			func(ctx context.Context, in chan interface{}) (out chan interface{}, runFn func() error) {
-				out = make(chan interface{}) // async handler makes its out channel
+			func(ctx context.Context, in chan any) (out chan any, runFn func() error) {
+				out = make(chan any) // async handler makes its out channel
 				runFn = func() error {
 					defer close(out) // handler should close out channel
 					for e := range in {
@@ -488,8 +488,8 @@ func ExampleFlow_fanOut() {
 			},
 
 			// second handler picks even numbers only and multiply by 3
-			func(ctx context.Context, in chan interface{}) (out chan interface{}, runFn func() error) {
-				out = make(chan interface{}) // async handler makes its out channel
+			func(ctx context.Context, in chan any) (out chan any, runFn func() error) {
+				out = make(chan any) // async handler makes its out channel
 				runFn = func() error {
 					defer close(out) // handler should close out channel
 					for e := range in {
@@ -511,8 +511,8 @@ func ExampleFlow_fanOut() {
 		),
 
 		// sum all numbers
-		func(ctx context.Context, in chan interface{}) (out chan interface{}, runFn func() error) {
-			out = make(chan interface{}, 1)
+		func(ctx context.Context, in chan any) (out chan any, runFn func() error) {
+			out = make(chan any, 1)
 			runFn = func() error {
 				defer close(out)
 				sum := 0

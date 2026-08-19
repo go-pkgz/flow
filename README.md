@@ -34,10 +34,10 @@ running handlers gracefully and won't keep any goroutine running/leaking.
 ```go
 // ReaderHandler creates flow.Handler, reading strings from any io.Reader
 func ReaderHandler(reader io.Reader) Handler {
-	return func(ctx context.Context, ch chan interface{}) (chan interface{}, func() error) {
+	return func(ctx context.Context, ch chan any) (chan any, func() error) {
 		metrics := flow.GetMetrics(ctx) // metrics collects how many records read with "read" key.
 
-		readerCh := make(chan interface{}, 1000)
+		readerCh := make(chan any, 1000)
 		readerFn := func() error {
 			defer close(readerCh)
 
@@ -70,8 +70,8 @@ func ExampleFlow_flow() {
 	f.Add(     // add handlers. Note: handlers can be added directly in New
 
 		// first handler, generate 100 initial values.
-		func(ctx context.Context, in chan interface{}) (out chan interface{}, runFn func() error) {
-			out = make(chan interface{}, 100) // example of non-async handler
+		func(ctx context.Context, in chan any) (out chan any, runFn func() error) {
+			out = make(chan any, 100) // example of non-async handler
 			for i := 1; i <= 100; i++ {
 				out <- i
 			}
@@ -80,8 +80,8 @@ func ExampleFlow_flow() {
 		},
 
 		// second handler - picks odd numbers only and multiply
-		func(ctx context.Context, in chan interface{}) (out chan interface{}, runFn func() error) {
-			out = make(chan interface{}) // async handler makes its out channel
+		func(ctx context.Context, in chan any) (out chan any, runFn func() error) {
+			out = make(chan any) // async handler makes its out channel
 			runFn = func() error {
 				defer close(out) // handler should close out channel
 				for e := range in {
@@ -102,8 +102,8 @@ func ExampleFlow_flow() {
 		},
 
 		// final handler - sum all numbers
-		func(ctx context.Context, in chan interface{}) (out chan interface{}, runFn func() error) {
-			out = make(chan interface{}, 1)
+		func(ctx context.Context, in chan any) (out chan any, runFn func() error) {
+			out = make(chan any, 1)
 			runFn = func() error {
 				defer close(out)
 				sum := 0
@@ -145,8 +145,8 @@ func ExampleFlow_parallel() {
 	f.Add(
 
 		// generate 100 initial values in single handler
-		func(ctx context.Context, in chan interface{}) (out chan interface{}, runFn func() error) {
-			out = make(chan interface{}, 100) // example of non-async handler
+		func(ctx context.Context, in chan any) (out chan any, runFn func() error) {
+			out = make(chan any, 100) // example of non-async handler
 			for i := 1; i <= 100; i++ {
 				out <- i
 			}
@@ -155,8 +155,8 @@ func ExampleFlow_parallel() {
 		},
 
 		// multiple all numbers in 10 parallel handlers
-		f.Parallel(10, func(ctx context.Context, in chan interface{}) (out chan interface{}, runFn func() error) {
-			out = make(chan interface{}) // async handler makes its out channel
+		f.Parallel(10, func(ctx context.Context, in chan any) (out chan any, runFn func() error) {
+			out = make(chan any) // async handler makes its out channel
 			runFn = func() error {
 				defer close(out) // handler should close out channel
 				for e := range in {
@@ -173,7 +173,7 @@ func ExampleFlow_parallel() {
 		}),
 
 		// print all numbers
-		func(ctx context.Context, in chan interface{}) (out chan interface{}, runFn func() error) {
+		func(ctx context.Context, in chan any) (out chan any, runFn func() error) {
 			runFn = func() error {
 				defer close(out)
 				sum := 0
@@ -221,7 +221,7 @@ terminated early, by an error with the default fail-fast or by a canceled contex
 ### worker function
 
 Worker function passed by user and runs in multiple workers (goroutines) concurrently. 
-This is the function: `type WorkerFn func(ctx context.Context, inpRec interface{}, sender SenderFn, store WorkerStore) error`
+This is the function: `type WorkerFn func(ctx context.Context, inpRec any, sender SenderFn, store WorkerStore) error`
 
 It takes `inp` parameter, does the job and optionally send result(s) with `SenderFn` to the common results channel. 
 Error will terminate all workers unless `ContinueOnError` set.
@@ -235,8 +235,8 @@ is not synchronised internally, it doesn't need to be as only the owning worker 
 
 ```go
 type WorkerStore interface {
-	Set(key string, val interface{})
-	Get(key string) (interface{}, bool)
+	Set(key string, val any)
+	Get(key string) (any, bool)
 	GetInt(key string) int
 	GetFloat(key string) float64
 	GetString(key string) string
@@ -251,7 +251,7 @@ _alternatively state can be kept outside of workers as a slice of values and acc
 ### usage
 
 ```go
-    p := pool.New(8, func(ctx context.Context, v interface{}, sendFn pool.SenderFn, ws pool.WorkerStore) error {
+    p := pool.New(8, func(ctx context.Context, v any, sendFn pool.SenderFn, ws pool.WorkerStore) error {
         // worker function gets input v, processes it and sends result(s) to the common results channel
 
         input, ok := v.(string) // in this case it gets string as input
@@ -286,7 +286,7 @@ _alternatively state can be kept outside of workers as a slice of values and acc
         p.Close() // indicates completion of all inputs
     }()
 
-    var v interface{}
+    var v any
     for cursor.Next(ctx, &v) {
         log.Print(v)  // print value
     }

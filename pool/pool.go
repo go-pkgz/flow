@@ -32,7 +32,6 @@ import (
 	"hash/crc32"
 	"math/rand"
 	"sync"
-	"time"
 
 	"github.com/go-pkgz/flow"
 	"golang.org/x/sync/errgroup"
@@ -43,7 +42,7 @@ type Workers struct {
 	poolSize  int // number of workers (goroutines)
 	batchSize int // size of batch send to workers
 
-	chunkFn         func(interface{}) string
+	chunkFn         func(any) string
 	resChanSize     int        // size of responses channel
 	workerChanSize  int        // size of worker channels
 	workerFn        WorkerFn   // worker function
@@ -52,9 +51,9 @@ type Workers struct {
 
 	store []WorkerStore // workers store, per worker ID
 
-	buf       [][]interface{}
+	buf       [][]any
 	bufLock   []sync.Mutex // guards buf, per worker ID
-	workersCh []chan []interface{}
+	workersCh []chan []any
 	abortCh   chan struct{} // closed on pool termination, releases blocked submits
 	ctx       context.Context
 	eg        *errgroup.Group
@@ -64,14 +63,14 @@ type Workers struct {
 
 // response wraps data and error
 type response struct {
-	value interface{} // the actual data
-	err   error       // optional error
+	value any   // the actual data
+	err   error // optional error
 }
 
 // WorkerStore defines interface for per-worker storage
 type WorkerStore interface {
-	Set(key string, val interface{})
-	Get(key string) (interface{}, bool)
+	Set(key string, val any)
+	Get(key string) (any, bool)
 	GetInt(key string) int
 	GetFloat(key string) float64
 	GetString(key string) string
@@ -85,10 +84,10 @@ type contextKey string
 const widContextKey contextKey = "worker-id"
 
 // WorkerFn processes input record inpRec and optionally sends results to sender func
-type WorkerFn func(ctx context.Context, inpRec interface{}, sender SenderFn, store WorkerStore) error
+type WorkerFn func(ctx context.Context, inpRec any, sender SenderFn, store WorkerStore) error
 
 // SenderFn func called by worker code to publish results
-type SenderFn func(val interface{}) error
+type SenderFn func(val any) error
 
 // CompleteFn processes input record inpRec and optionally sends response to respCh
 type CompleteFn func(ctx context.Context, store WorkerStore) error
@@ -102,8 +101,8 @@ func New(poolSize int, workerFn WorkerFn, options ...Option) *Workers {
 
 	res := Workers{
 		poolSize:       poolSize,
-		workersCh:      make([]chan []interface{}, poolSize),
-		buf:            make([][]interface{}, poolSize),
+		workersCh:      make([]chan []any, poolSize),
+		buf:            make([][]any, poolSize),
 		bufLock:        make([]sync.Mutex, poolSize),
 		abortCh:        make(chan struct{}),
 		store:          make([]WorkerStore, poolSize),
@@ -122,21 +121,20 @@ func New(poolSize int, workerFn WorkerFn, options ...Option) *Workers {
 
 	// initialize workers channels and batch buffers
 	for id := 0; id < poolSize; id++ {
-		res.workersCh[id] = make(chan []interface{}, res.workerChanSize)
+		res.workersCh[id] = make(chan []any, res.workerChanSize)
 		if res.batchSize > 1 {
-			res.buf[id] = make([]interface{}, 0, poolSize)
+			res.buf[id] = make([]any, 0, poolSize)
 		}
 		res.store[id] = NewLocalStore()
 	}
 
-	rand.Seed(time.Now().UnixNano())
 	return &res
 }
 
 // Submit record to pool, can be blocked until the record accepted by a worker or the pool terminated.
 // Submits after termination, i.e. after a worker failed or the context canceled, don't block and the
 // records may be dropped as the workers are shutting down.
-func (p *Workers) Submit(v interface{}) {
+func (p *Workers) Submit(v any) {
 
 	// randomize distribution by default
 	id := rand.Intn(p.poolSize) //nolint gosec
@@ -147,7 +145,7 @@ func (p *Workers) Submit(v interface{}) {
 
 	if p.batchSize <= 1 {
 		// skip all buffering if batch size is 1 or less
-		p.send(id, append([]interface{}{}, v))
+		p.send(id, append([]any{}, v))
 		return
 	}
 
@@ -157,7 +155,7 @@ func (p *Workers) Submit(v interface{}) {
 	p.buf[id] = append(p.buf[id], v) // add to batch buffer
 	if len(p.buf[id]) >= p.batchSize {
 		// commit copy to workers
-		cp := make([]interface{}, len(p.buf[id]))
+		cp := make([]any, len(p.buf[id]))
 		copy(cp, p.buf[id])
 		p.send(id, cp)
 		p.buf[id] = p.buf[id][:0] // reset size, keep capacity
@@ -166,7 +164,7 @@ func (p *Workers) Submit(v interface{}) {
 
 // send records to the worker with a given id, drops them if the pool terminated and nothing reads workers channels.
 // Both cases can be ready on termination, i.e. a shutting down worker may still get the records.
-func (p *Workers) send(id int, vals []interface{}) {
+func (p *Workers) send(id int, vals []any) {
 	select {
 	case p.workersCh[id] <- vals:
 	case <-p.abortCh:
@@ -184,7 +182,7 @@ func (p *Workers) Go(ctx context.Context) (Cursor, error) {
 	p.ctx = context.WithValue(ctx, flow.MetricsContextKey, flow.NewMetrics())
 	var egCtx context.Context
 	p.eg, egCtx = errgroup.WithContext(ctx)
-	worker := func(id int, inCh chan []interface{}) func() error {
+	worker := func(id int, inCh chan []any) func() error {
 		return func() error {
 			wCtx := context.WithValue(p.ctx, widContextKey, id)
 			for {
@@ -301,8 +299,8 @@ func (p *Workers) Wait(ctx context.Context) error {
 }
 
 // sendResponseFn makes sender func used by worker with the given context and response channel
-func (p *Workers) sendResponseFn(ctx context.Context, respCh chan response) func(val interface{}) error {
-	return func(val interface{}) error {
+func (p *Workers) sendResponseFn(ctx context.Context, respCh chan response) func(val any) error {
+	return func(val any) error {
 		select {
 		case respCh <- response{value: val}:
 			return nil
