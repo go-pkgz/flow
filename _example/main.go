@@ -21,7 +21,7 @@ func main() {
 
 	// seed channel with the list of input files. Usually seeding implemented as a separate handler but for our toy example
 	// filling a buffered channel will do it.
-	seedCh := make(chan interface{}, 4)
+	seedCh := make(chan any, 4)
 	seedCh <- "data/input-1.txt"
 	seedCh <- "data/input-2.txt"
 	seedCh <- "data/input-3.txt"
@@ -41,10 +41,10 @@ func main() {
 }
 
 // lineSplitHandler gets file names and sends lines of text
-func lineSplitHandler(ctx context.Context, ch chan interface{}) (chan interface{}, func() error) {
+func lineSplitHandler(ctx context.Context, ch chan any) (chan any, func() error) {
 	log.Print("make line split handler")
 	metrics := flow.GetMetrics(ctx)
-	lineCh := make(chan interface{}, 100)
+	lineCh := make(chan any, 100)
 	lineFn := func() error {
 		log.Printf("start line split handler %d", flow.CID(ctx))
 		defer close(lineCh)
@@ -89,10 +89,10 @@ type wordsInfo struct {
 // wordsHandler reads lines of text from the input and sends wordsInfo
 func wordsHandler(minSize int) flow.Handler {
 	log.Printf("make words handler with minsize=%d", minSize)
-	return func(ctx context.Context, ch chan interface{}) (chan interface{}, func() error) {
+	return func(ctx context.Context, ch chan any) (chan any, func() error) {
 		log.Printf("start words handler %d with minsize=%d", flow.CID(ctx), minSize)
 		metrics := flow.GetMetrics(ctx)
-		wordsCh := make(chan interface{}, 1000)
+		wordsCh := make(chan any, 1000)
 		wordsFn := func() error {
 			defer close(wordsCh)
 			count := 0
@@ -120,8 +120,8 @@ func wordsHandler(minSize int) flow.Handler {
 }
 
 // sumHandler reduces all inputs with wordsInfo to the final figures and prints it as result
-func sumHandler(_ context.Context, ch chan interface{}) (chan interface{}, func() error) {
-	nopCh := make(chan interface{})
+func sumHandler(_ context.Context, ch chan any) (chan any, func() error) {
+	nopCh := make(chan any)
 	sumFn := func() error {
 		log.Printf("start sum handler")
 		defer close(nopCh)

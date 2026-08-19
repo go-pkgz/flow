@@ -6,7 +6,7 @@ type Option func(p *Workers)
 // ChunkFn functional option defines chunk func distributing records to particular workers.
 // The function should return key string identifying the record.
 // Record with a given key string guaranteed to be processed by the same worker.
-func ChunkFn(chunkFn func(val interface{}) string) Option {
+func ChunkFn(chunkFn func(val any) string) Option {
 	return func(p *Workers) {
 		p.chunkFn = chunkFn
 	}

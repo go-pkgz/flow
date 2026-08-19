@@ -5,21 +5,21 @@ import (
 )
 
 type localStore struct {
-	data map[string]interface{}
+	data map[string]any
 }
 
 // NewLocalStore makes map-based worker store
 func NewLocalStore() WorkerStore {
-	return &localStore{data: map[string]interface{}{}}
+	return &localStore{data: map[string]any{}}
 }
 
 // Set value for a given key
-func (l *localStore) Set(key string, val interface{}) {
+func (l *localStore) Set(key string, val any) {
 	l.data[key] = val
 }
 
 // Get value for a given key
-func (l *localStore) Get(key string) (interface{}, bool) {
+func (l *localStore) Get(key string) (any, bool) {
 	val, ok := l.data[key]
 	return val, ok
 }

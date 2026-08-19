@@ -14,7 +14,7 @@ type Cursor struct {
 
 // Next returns next result from the cursor, ok = false on completion.
 // Any error saved internally and can be returned by Err call
-func (c *Cursor) Next(ctx context.Context, v interface{}) bool {
+func (c *Cursor) Next(ctx context.Context, v any) bool {
 	for {
 		select {
 		case resp, ok := <-c.ch:
@@ -42,8 +42,8 @@ func (c *Cursor) Next(ctx context.Context, v interface{}) bool {
 }
 
 // All gets all data from the cursor
-func (c *Cursor) All(ctx context.Context) (res []interface{}, err error) {
-	var v interface{}
+func (c *Cursor) All(ctx context.Context) (res []any, err error) {
+	var v any
 	for c.Next(ctx, &v) {
 		res = append(res, v)
 	}

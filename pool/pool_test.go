@@ -26,7 +26,7 @@ func TestPool(t *testing.T) {
 			Fld string
 		}
 
-		worker := func(ctx context.Context, v interface{}, sender SenderFn, store WorkerStore) error {
+		worker := func(ctx context.Context, v any, sender SenderFn, store WorkerStore) error {
 			rec := v.(inpRec)
 			if rec.Num%10 == 0 {
 				err := sender(fmt.Sprintf("%s-%03d", rec.Fld, rec.Num))
@@ -38,7 +38,7 @@ func TestPool(t *testing.T) {
 
 		var opts []Option
 		if chunks {
-			opts = append(opts, ChunkFn(func(v interface{}) string {
+			opts = append(opts, ChunkFn(func(v any) string {
 				return v.(inpRec).Fld
 			}))
 		}
@@ -50,7 +50,7 @@ func TestPool(t *testing.T) {
 		require.NoError(t, err)
 
 		go func() {
-			for i := 0; i < 1000; i++ {
+			for i := range 1000 {
 				p.Submit(inpRec{Num: i, Fld: fmt.Sprintf("val-%03d", i)})
 			}
 			p.Close()
@@ -58,7 +58,7 @@ func TestPool(t *testing.T) {
 
 		n := 0
 		var res []string
-		var v interface{}
+		var v any
 		for cursor.Next(ctx, &v) {
 			log.Printf("%+v", v)
 			res = append(res, v.(string))
@@ -130,14 +130,14 @@ func TestPoolWithStruct(t *testing.T) {
 		k5 bool
 	}
 
-	p := New(4, func(ctx context.Context, inpRec interface{}, sender SenderFn, store WorkerStore) error {
+	p := New(4, func(ctx context.Context, inpRec any, sender SenderFn, store WorkerStore) error {
 		i := inpRec.(int)
 		r := resp{k1: "rec" + strconv.Itoa(i), k2: i, k3: "something", k4: []string{"foo", "bar"}, k5: true}
 		return sender(r)
 	})
 
 	go func() {
-		for i := 0; i < 1000; i++ {
+		for i := range 1000 {
 			p.Submit(i)
 			time.Sleep(time.Millisecond * time.Duration(rand.Intn(3))) //nolint gosec
 		}
@@ -161,7 +161,7 @@ func TestPoolWithStruct(t *testing.T) {
 
 func TestPoolWithStore(t *testing.T) {
 
-	worker := func(ctx context.Context, v interface{}, send SenderFn, store WorkerStore) error {
+	worker := func(ctx context.Context, v any, send SenderFn, store WorkerStore) error {
 		store.Set("counter", store.GetInt("counter")+1)
 		Metrics(ctx).Add("c", 1)
 		require.NoError(t, send("something"))
@@ -184,7 +184,7 @@ func TestPoolWithStore(t *testing.T) {
 	require.NoError(t, err)
 
 	go func() {
-		for i := 0; i < 1000; i++ {
+		for range 1000 {
 			p.Submit("line")
 			time.Sleep(time.Millisecond * time.Duration(rand.Intn(3))) //nolint gosec
 		}
@@ -202,7 +202,7 @@ func TestPoolWithStore(t *testing.T) {
 
 func TestPoolWaitDrainsResults(t *testing.T) {
 
-	worker := func(ctx context.Context, v interface{}, sender SenderFn, store WorkerStore) error {
+	worker := func(ctx context.Context, v any, sender SenderFn, store WorkerStore) error {
 		return sender(v)
 	}
 
@@ -211,7 +211,7 @@ func TestPoolWaitDrainsResults(t *testing.T) {
 	require.NoError(t, err)
 
 	go func() {
-		for i := 0; i < 100; i++ {
+		for i := range 100 {
 			p.Submit(i)
 		}
 		p.Close()
@@ -224,7 +224,7 @@ func TestPoolWaitDrainsResults(t *testing.T) {
 
 func TestPoolWaitReturnsWorkerError(t *testing.T) {
 
-	worker := func(ctx context.Context, v interface{}, sender SenderFn, store WorkerStore) error {
+	worker := func(ctx context.Context, v any, sender SenderFn, store WorkerStore) error {
 		return errors.New("some error")
 	}
 
@@ -241,13 +241,13 @@ func TestPoolWaitReturnsWorkerError(t *testing.T) {
 }
 
 func TestPoolWaitNotActivated(t *testing.T) {
-	p := New(1, func(ctx context.Context, v interface{}, sender SenderFn, store WorkerStore) error { return nil })
+	p := New(1, func(ctx context.Context, v any, sender SenderFn, store WorkerStore) error { return nil })
 	assert.EqualError(t, p.Wait(context.Background()), "workers poll not activated")
 }
 
 func TestPoolCanceled(t *testing.T) {
 
-	worker := func(ctx context.Context, v interface{}, sender SenderFn, store WorkerStore) error {
+	worker := func(ctx context.Context, v any, sender SenderFn, store WorkerStore) error {
 		time.Sleep(100 * time.Millisecond)
 		return sender(v)
 	}
@@ -261,7 +261,7 @@ func TestPoolCanceled(t *testing.T) {
 	require.NoError(t, err)
 
 	go func() {
-		for i := 0; i < 1000; i++ {
+		for range 1000 {
 			p.Submit("line")
 			time.Sleep(time.Millisecond * 100)
 		}
@@ -269,7 +269,7 @@ func TestPoolCanceled(t *testing.T) {
 	}()
 
 	n := 0
-	var v interface{}
+	var v any
 	for cursor.Next(ctx, &v) {
 		n++
 	}
@@ -279,7 +279,7 @@ func TestPoolCanceled(t *testing.T) {
 }
 
 func TestPoolError(t *testing.T) {
-	worker := func(ctx context.Context, v interface{}, sender SenderFn, store WorkerStore) error {
+	worker := func(ctx context.Context, v any, sender SenderFn, store WorkerStore) error {
 		Metrics(ctx).Inc("calls")
 		if rand.Intn(10) > 5 { //nolint gosec
 			return errors.New("some error")
@@ -294,7 +294,7 @@ func TestPoolError(t *testing.T) {
 	require.NoError(t, err)
 
 	go func() {
-		for i := 0; i < 1000; i++ {
+		for range 1000 {
 			p.Submit("line")
 		}
 		p.Close()
@@ -313,7 +313,7 @@ func TestPoolError(t *testing.T) {
 
 func TestPoolErrorContinue(t *testing.T) {
 
-	worker := func(ctx context.Context, v interface{}, sender SenderFn, store WorkerStore) error {
+	worker := func(ctx context.Context, v any, sender SenderFn, store WorkerStore) error {
 		Metrics(ctx).Inc("calls")
 		if rand.Intn(10) > 5 { //nolint gosec
 			Metrics(ctx).Inc("errs")
@@ -331,7 +331,7 @@ func TestPoolErrorContinue(t *testing.T) {
 	require.NoError(t, err)
 
 	go func() {
-		for i := 0; i < 1000; i++ {
+		for range 1000 {
 			p.Submit("line")
 			time.Sleep(time.Duration(rand.Intn(1000)) * time.Nanosecond) //nolint
 		}
@@ -351,21 +351,21 @@ func TestPoolErrorContinue(t *testing.T) {
 
 func TestPoolSubmitConcurrent(t *testing.T) {
 
-	worker := func(ctx context.Context, v interface{}, sender SenderFn, store WorkerStore) error {
+	worker := func(ctx context.Context, v any, sender SenderFn, store WorkerStore) error {
 		return sender(v)
 	}
 
 	// chunkFn sends everything to the same worker, i.e. all producers share a single batch buffer
-	p := New(4, worker, Batch(10), ChunkFn(func(v interface{}) string { return "single" }))
+	p := New(4, worker, Batch(10), ChunkFn(func(v any) string { return "single" }))
 	cursor, err := p.Go(context.Background())
 	require.NoError(t, err)
 
 	var wg sync.WaitGroup
-	for i := 0; i < 8; i++ {
+	for i := range 8 {
 		wg.Add(1)
 		go func(producer int) {
 			defer wg.Done()
-			for j := 0; j < 100; j++ {
+			for j := range 100 {
 				p.Submit(fmt.Sprintf("%d-%03d", producer, j))
 			}
 		}(i)
@@ -394,7 +394,7 @@ func TestPoolSubmitAfterTermination(t *testing.T) {
 		done := make(chan struct{})
 		go func() {
 			defer close(done)
-			for i := 0; i < 100; i++ {
+			for i := range 100 {
 				p.Submit(i)
 			}
 		}()
@@ -411,7 +411,7 @@ func TestPoolSubmitAfterTermination(t *testing.T) {
 	}
 
 	t.Run("worker failed", func(t *testing.T) {
-		p := New(1, func(ctx context.Context, v interface{}, sender SenderFn, store WorkerStore) error {
+		p := New(1, func(ctx context.Context, v any, sender SenderFn, store WorkerStore) error {
 			return errors.New("some error")
 		})
 		cursor, err := p.Go(context.Background())
@@ -426,7 +426,7 @@ func TestPoolSubmitAfterTermination(t *testing.T) {
 		defer cancel()
 
 		started, once := make(chan struct{}), sync.Once{}
-		p := New(1, func(wCtx context.Context, v interface{}, sender SenderFn, store WorkerStore) error {
+		p := New(1, func(wCtx context.Context, v any, sender SenderFn, store WorkerStore) error {
 			once.Do(func() { close(started) })
 			<-wCtx.Done() // hold the worker to make submits pile up
 			return nil
@@ -446,25 +446,25 @@ func TestWorkers_SubmitWithChunks(t *testing.T) {
 	tbl := []struct {
 		inp      string
 		poolSize int
-		buf      [][]interface{}
+		buf      [][]any
 	}{
-		{"test", 7, [][]interface{}{{"test"}, {}, {}, {}, {}, {}, {}}},
-		{"test2", 7, [][]interface{}{{}, {}, {}, {"test2"}, {}, {}, {}}},
-		{"test3", 7, [][]interface{}{{}, {}, {"test3"}, {}, {}, {}, {}}},
-		{"test123", 7, [][]interface{}{{}, {}, {"test123"}, {}, {}, {}, {}}},
-		{"test123", 1, [][]interface{}{{"test123"}}},
-		{"test12345", 1, [][]interface{}{{"test12345"}}},
-		{"zzzz", 2, [][]interface{}{{"zzzz"}, {}}},
-		{"xxxx", 2, [][]interface{}{{}, {"xxxx"}}},
+		{"test", 7, [][]any{{"test"}, {}, {}, {}, {}, {}, {}}},
+		{"test2", 7, [][]any{{}, {}, {}, {"test2"}, {}, {}, {}}},
+		{"test3", 7, [][]any{{}, {}, {"test3"}, {}, {}, {}, {}}},
+		{"test123", 7, [][]any{{}, {}, {"test123"}, {}, {}, {}, {}}},
+		{"test123", 1, [][]any{{"test123"}}},
+		{"test12345", 1, [][]any{{"test12345"}}},
+		{"zzzz", 2, [][]any{{"zzzz"}, {}}},
+		{"xxxx", 2, [][]any{{}, {"xxxx"}}},
 	}
 
-	wk := func(ctx context.Context, inpRec interface{}, sender SenderFn, store WorkerStore) error {
+	wk := func(ctx context.Context, inpRec any, sender SenderFn, store WorkerStore) error {
 		return nil
 	}
 
 	for i, tt := range tbl {
 
-		p := New(tt.poolSize, wk, Batch(5), ChunkFn(func(val interface{}) string {
+		p := New(tt.poolSize, wk, Batch(5), ChunkFn(func(val any) string {
 			return val.(string) + "$"
 		}))
 
@@ -478,18 +478,18 @@ func TestWorkers_SubmitWithChunks(t *testing.T) {
 
 func TestWorkers_SubmitNoChunkFn(t *testing.T) {
 
-	wk := func(ctx context.Context, inpRec interface{}, sender SenderFn, store WorkerStore) error {
+	wk := func(ctx context.Context, inpRec any, sender SenderFn, store WorkerStore) error {
 		return nil
 	}
 
 	p := New(8, wk, Batch(1000))
 
-	for i := 0; i < 1000; i++ {
+	for i := range 1000 {
 		p.Submit("something " + strconv.Itoa(i))
 	}
 
 	tot := 0
-	for j := 0; j < 8; j++ {
+	for j := range 8 {
 		tot += len(p.buf[j])
 		assert.True(t, len(p.buf[j]) > 0 && len(p.buf[j]) < 1000)
 	}
@@ -500,7 +500,7 @@ func TestWorkers_SubmitNoChunkFn(t *testing.T) {
 // illustrates basic use of workers pool
 func ExampleWorkers_basic() {
 
-	workerFn := func(ctx context.Context, inpRec interface{}, sender SenderFn, store WorkerStore) error {
+	workerFn := func(ctx context.Context, inpRec any, sender SenderFn, store WorkerStore) error {
 		v, ok := inpRec.(string)
 		if !ok {
 			return errors.New("incorrect input type")
@@ -534,7 +534,7 @@ func ExampleWorkers_basic() {
 // illustrates use of workers pool with all options
 func ExampleWorkers_withOptions() {
 
-	workerFn := func(ctx context.Context, inpRec interface{}, sender SenderFn, store WorkerStore) error {
+	workerFn := func(ctx context.Context, inpRec any, sender SenderFn, store WorkerStore) error {
 		v, ok := inpRec.(string)
 		if !ok {
 			return errors.New("incorrect input type")
@@ -553,7 +553,7 @@ func ExampleWorkers_withOptions() {
 	// create workers pool with chunks and batch mode. ChunkFn used to detect worker and guaranteed to send same chunk
 	// to the same worker. This is important for stateful workers. Batch sets the size of internal buffer collecting records
 	// internally before sending them to worker.
-	p := New(8, workerFn, Batch(10), ResChanSize(5), WorkerChanSize(2), ChunkFn(func(val interface{}) string {
+	p := New(8, workerFn, Batch(10), ResChanSize(5), WorkerChanSize(2), ChunkFn(func(val any) string {
 		v := val.(string)
 		return v[:4] // chunks by 4chars prefix
 	}))

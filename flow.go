@@ -31,8 +31,8 @@ type Flow struct {
 	group *errgroup.Group // all handlers runs in this errgroup
 	ctx   context.Context // context used for cancellation
 
-	lastCh chan interface{} // last channel in flow
-	funcs  []func() error   // all runnable functions
+	lastCh chan any       // last channel in flow
+	funcs  []func() error // all runnable functions
 
 	fanoutBuffer int       // buffer size for fanout
 	activateOnce sync.Once // prevents multiple activations of flow
@@ -43,7 +43,7 @@ type Flow struct {
 // fn will be executed in a separate goroutine. fn is thread-safe and may have mutable state. It will live
 // all flow lifetime and usually implements read->process->write cycle. If fn returns != nil it indicates
 // critical failure and will stop, with canceled context, all handlers in the flow.
-type Handler func(ctx context.Context, in chan interface{}) (out chan interface{}, runFn func() error)
+type Handler func(ctx context.Context, in chan any) (out chan any, runFn func() error)
 
 // New creates flow object with context and common errgroup. This errgroup used to schedule and cancel all handlers.
 // options defines non-default parameters.
@@ -91,9 +91,9 @@ func (f *Flow) Parallel(concurrent int, handler Handler) Handler {
 		return handler
 	}
 
-	return func(ctx context.Context, ch chan interface{}) (chan interface{}, func() error) {
-		var outChs []chan interface{}
-		for n := 0; n < concurrent; n++ {
+	return func(ctx context.Context, ch chan any) (chan any, func() error) {
+		outChs := make([]chan any, 0, concurrent)
+		for n := range concurrent {
 			ctxWithID := context.WithValue(ctx, CidContextKey, n) // put n as id to context for parallel handlers
 			out, fn := handler(ctxWithID, ch)                     // all parallel handlers read from the same lastCh
 			f.funcs = append(f.funcs, fn)                         // register runnable with flow executor
@@ -115,15 +115,15 @@ func (f *Flow) FanOut(handler Handler, handlers ...Handler) Handler {
 		return handler
 	}
 
-	return func(ctx context.Context, ch chan interface{}) (chan interface{}, func() error) {
+	return func(ctx context.Context, ch chan any) (chan any, func() error) {
 
 		handlers = append([]Handler{handler}, handlers...) // add head handler to head
 
-		inChs := make([]chan interface{}, len(handlers))  // input channels for forked input from ch
-		outChs := make([]chan interface{}, len(handlers)) // output channels for merging
+		inChs := make([]chan any, len(handlers))  // input channels for forked input from ch
+		outChs := make([]chan any, len(handlers)) // output channels for merging
 
 		for i := 0; i < len(handlers); i++ {
-			inChs[i] = make(chan interface{}, f.fanoutBuffer)     // buffered to allow async readers
+			inChs[i] = make(chan any, f.fanoutBuffer)             // buffered to allow async readers
 			ctxWithID := context.WithValue(ctx, CidContextKey, i) // keep i as ID for handler in context
 			out, fn := handlers[i](ctxWithID, inChs[i])           // handle forked input
 			f.funcs = append(f.funcs, fn)                         // register runnable with flow executor
@@ -171,7 +171,7 @@ func (f *Flow) Wait() error {
 
 // Channel returns last (final) channel in flow. Usually consumers don't need this channel, but can be used
 // to return some final result(s)
-func (f *Flow) Channel() chan interface{} {
+func (f *Flow) Channel() chan any {
 	return f.lastCh
 }
 
@@ -181,15 +181,14 @@ func (f *Flow) Metrics() *Metrics {
 }
 
 // merge gets multiple channels and fan-in to a single output channel
-func (f *Flow) merge(ctx context.Context, chs []chan interface{}) (mergeCh chan interface{}, mergeFn func() error) {
+func (f *Flow) merge(ctx context.Context, chs []chan any) (mergeCh chan any, mergeFn func() error) {
 
-	mergeCh = make(chan interface{})
+	mergeCh = make(chan any)
 	mergeFn = func() error {
 		defer close(mergeCh)
 
 		gr, ctxGroup := errgroup.WithContext(ctx)
 		for _, ch := range chs {
-			ch := ch
 			gr.Go(func() error {
 				for e := range ch {
 					if err := Send(ctxGroup, mergeCh, e); err != nil {
@@ -216,7 +215,7 @@ func CID(ctx context.Context) int {
 
 // Send entry to channel or returns error if context canceled.
 // Shortcut for send-or-fail-on-cancel most handlers implement.
-func Send(ctx context.Context, ch chan interface{}, e interface{}) error {
+func Send(ctx context.Context, ch chan any, e any) error {
 	select {
 	case ch <- e:
 		return nil
@@ -227,7 +226,7 @@ func Send(ctx context.Context, ch chan interface{}, e interface{}) error {
 
 // Recv gets entry from the channel or returns error if context canceled.
 // Shortcut for read-or-fail-on-cancel most handlers implement.
-func Recv(ctx context.Context, ch chan interface{}) (interface{}, error) {
+func Recv(ctx context.Context, ch chan any) (any, error) {
 	select {
 	case val := <-ch:
 		return val, nil

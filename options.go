@@ -25,7 +25,7 @@ func FanOutSize(size int) Option {
 
 // Input functional option defines input channels for first handler in chain.
 // Can be used to connect multiple flows together or seed flow from the outside, with some external data.
-func Input(ch chan interface{}) Option {
+func Input(ch chan any) Option {
 	return func(f *Flow) {
 		f.lastCh = ch
 	}
