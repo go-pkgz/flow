@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -301,6 +302,99 @@ func TestPoolErrorContinue(t *testing.T) {
 	t.Logf("%s", p.Metrics())
 	_, err = p.Go(context.Background())
 	assert.EqualError(t, err, "workers poll already activated")
+}
+
+func TestPoolSubmitConcurrent(t *testing.T) {
+
+	worker := func(ctx context.Context, v interface{}, sender SenderFn, store WorkerStore) error {
+		return sender(v)
+	}
+
+	// chunkFn sends everything to the same worker, i.e. all producers share a single batch buffer
+	p := New(4, worker, Batch(10), ChunkFn(func(v interface{}) string { return "single" }))
+	cursor, err := p.Go(context.Background())
+	require.NoError(t, err)
+
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func(producer int) {
+			defer wg.Done()
+			for j := 0; j < 100; j++ {
+				p.Submit(fmt.Sprintf("%d-%03d", producer, j))
+			}
+		}(i)
+	}
+
+	go func() {
+		wg.Wait()
+		p.Close()
+	}()
+
+	res, err := cursor.All(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, 800, len(res), "all submitted records processed")
+
+	seen := map[string]bool{}
+	for _, v := range res {
+		seen[v.(string)] = true
+	}
+	assert.Equal(t, 800, len(seen), "each record processed once")
+}
+
+func TestPoolSubmitAfterTermination(t *testing.T) {
+
+	// submit in the background, the returned channel closed as soon as all submits returned
+	submitAll := func(p *Workers) chan struct{} {
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			for i := 0; i < 100; i++ {
+				p.Submit(i)
+			}
+		}()
+		return done
+	}
+
+	requireDone := func(t *testing.T, done chan struct{}) {
+		t.Helper()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Fatal("submit blocked after the pool terminated")
+		}
+	}
+
+	t.Run("worker failed", func(t *testing.T) {
+		p := New(1, func(ctx context.Context, v interface{}, sender SenderFn, store WorkerStore) error {
+			return errors.New("some error")
+		})
+		cursor, err := p.Go(context.Background())
+		require.NoError(t, err)
+		go func() { _, _ = cursor.All(context.Background()) }() // consume results to let the pool complete
+
+		requireDone(t, submitAll(p))
+	})
+
+	t.Run("context canceled", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		started, once := make(chan struct{}), sync.Once{}
+		p := New(1, func(wCtx context.Context, v interface{}, sender SenderFn, store WorkerStore) error {
+			once.Do(func() { close(started) })
+			<-wCtx.Done() // hold the worker to make submits pile up
+			return nil
+		})
+		cursor, err := p.Go(ctx)
+		require.NoError(t, err)
+		go func() { _, _ = cursor.All(context.Background()) }() // consume results to let the pool complete
+
+		done := submitAll(p)
+		<-started
+		cancel()
+		requireDone(t, done)
+	})
 }
 
 func TestWorkers_SubmitWithChunks(t *testing.T) {
