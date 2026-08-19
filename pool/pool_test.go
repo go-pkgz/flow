@@ -199,6 +199,51 @@ func TestPoolWithStore(t *testing.T) {
 	assert.Equal(t, 1000, p.Metrics().Get("c"))
 }
 
+func TestPoolWaitDrainsResults(t *testing.T) {
+
+	worker := func(ctx context.Context, v interface{}, sender SenderFn, store WorkerStore) error {
+		return sender(v)
+	}
+
+	p := New(4, worker) // all defaults, i.e. unbuffered response channel
+	_, err := p.Go(context.Background())
+	require.NoError(t, err)
+
+	go func() {
+		for i := 0; i < 100; i++ {
+			p.Submit(i)
+		}
+		p.Close()
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	assert.NoError(t, p.Wait(ctx), "wait completes with the cursor ignored")
+}
+
+func TestPoolWaitReturnsWorkerError(t *testing.T) {
+
+	worker := func(ctx context.Context, v interface{}, sender SenderFn, store WorkerStore) error {
+		return errors.New("some error")
+	}
+
+	p := New(1, worker)
+	_, err := p.Go(context.Background())
+	require.NoError(t, err)
+
+	p.Submit("something")
+	p.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	assert.EqualError(t, p.Wait(ctx), "worker 0 failed: some error")
+}
+
+func TestPoolWaitNotActivated(t *testing.T) {
+	p := New(1, func(ctx context.Context, v interface{}, sender SenderFn, store WorkerStore) error { return nil })
+	assert.EqualError(t, p.Wait(context.Background()), "workers poll not activated")
+}
+
 func TestPoolCanceled(t *testing.T) {
 
 	worker := func(ctx context.Context, v interface{}, sender SenderFn, store WorkerStore) error {
