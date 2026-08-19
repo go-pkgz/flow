@@ -2,8 +2,8 @@ name: build
 
 on:
   push:
-    branches:
-    tags:
+    branches: ["**"]
+    tags: ["**"]
   pull_request:
 
 jobs:
@@ -12,23 +12,23 @@ jobs:
 
     steps:
       - name: checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: set up go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
           go-version: "1.23"
         id: go
 
       - name: build and test
         run: |
-          go test -timeout=60s -v -covermode=count -coverprofile=$GITHUB_WORKSPACE/profile.cov_tmp
+          go test -race -timeout=60s -covermode=atomic -coverprofile=$GITHUB_WORKSPACE/profile.cov_tmp ./...
           cat $GITHUB_WORKSPACE/profile.cov_tmp | grep -v "_mock.go" > $GITHUB_WORKSPACE/profile.cov
         env:
           TZ: "America/Chicago"
 
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v7
+        uses: golangci/golangci-lint-action@v9
         with:
           version: latest
 

@@ -27,7 +27,7 @@ func (c *Cursor) Next(ctx context.Context, v interface{}) bool {
 			}
 
 			rv := reflect.ValueOf(v)
-			if rv.Kind() != reflect.Ptr || rv.IsNil() {
+			if rv.Kind() != reflect.Pointer || rv.IsNil() {
 				c.err = errors.New("value type is not pointer")
 				return false
 			}
